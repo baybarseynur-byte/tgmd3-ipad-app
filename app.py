@@ -17,7 +17,49 @@ from fpdf import FPDF
 st.set_page_config(page_title="TGMD-3 PRO (Görsel Rapor)", layout="wide", page_icon="🧬")
 
 DB_FILE = "tgmd3_database_pro.xlsx"
+# -----------------------------------------------------------------------------
+# 🔒 GÜVENLİK (BURAYI EKLEYİN)
+# -----------------------------------------------------------------------------
+def sifre_kontrol():
+    """Kullanıcı doğru şifreyi girene kadar uygulamayı durdurur."""
+    
+    # Session state içinde şifre doğrulama durumu yoksa False yap
+    if "sifre_dogru" not in st.session_state:
+        st.session_state["sifre_dogru"] = False
 
+    # Şifre zaten doğru girildiyse fonksiyon True döner, uygulama açılır
+    if st.session_state["sifre_dogru"]:
+        return True
+
+    # Şifre girilmediyse giriş kutusunu göster
+    st.markdown("## 🔒 Giriş Yapınız")
+    st.write("Bu uygulamaya erişmek için lütfen şifreyi giriniz.")
+    
+    girilen_sifre = st.text_input("Şifre:", type="password")
+
+    if st.button("Giriş Yap"):
+        # Streamlit Secrets'tan şifreyi kontrol et
+        # NOT: Buradaki "giris_sifresi" anahtarını birazdan web sitesine yazacağız.
+        try:
+            dogru_sifre = st.secrets["giris_sifresi"]
+        except keyError:
+            st.error("Sistem Hatası: Şifre sunucuda tanımlanmamış!")
+            return False
+
+        if girilen_sifre == dogru_sifre:
+            st.session_state["sifre_dogru"] = True
+            st.rerun()  # Sayfayı yenileyip uygulamayı aç
+        else:
+            st.error("Hatalı şifre! Lütfen tekrar deneyiniz.")
+    
+    return False
+
+# Eğer şifre kontrolü geçilemezse (False dönerse), kodun geri kalanını çalıştırmayı durdur.
+if not sifre_kontrol():
+    st.stop()
+# -----------------------------------------------------------------------------
+# 🔒 GÜVENLİK SONU
+# -----------------------------------------------------------------------------
 TGMD3_PROTOCOL = {
     "LOKOMOTOR": {
         "Koşu (Run)": ["1. Kol-bacak çapraz hareket-dirsekler bükülü", "2. Ayakların yerden kesilmesi", "3. Ayak ucuyla basma", "4. Havadaki ayak 90 derece bükülü"],
