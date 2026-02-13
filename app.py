@@ -196,4 +196,4 @@ def create_full_report(ogrenci_bilgi, fig_radar, fig_line, gecmis_df, df_ana):
     pdf.add_page()
     pdf.set_font("Arial", size=10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, tr_chars(f"Öğrenci: {ogrenci_bilgi['Ad']} {ogrenci_bilgi['Soyad']}"), ln=True, align='C
+	pdf.cell(0, 10, tr_chars(f"Öğrenci: {ogrenci_bilgi['Ad']} {ogrenci_bilgi['Soyad']}"), ln=True, align='C'
