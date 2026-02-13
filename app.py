@@ -442,8 +442,15 @@ elif menu == "3. Gelişimsel Rapor":
             angles = [n / float(N) * 2 * pi for n in range(N)]
             angles += [angles[0]]
             
-            # Radar
+            # Radar Grafiği Ayarları
             fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+            
+            # --- DÜZELTME BURADA: SABİT SKALA (0-10 ARASI) ---
+            ax_radar.set_ylim(0, 10) 
+            ax_radar.set_yticks([2, 4, 6, 8, 10])  # Ara çizgiler
+            ax_radar.set_yticklabels(["2", "4", "6", "8", "10"], color="grey", size=8)
+            # ------------------------------------------------
+            
             colors = cm.viridis(np.linspace(0, 1, len(gecmis)))
             
             for idx, (index, row) in enumerate(gecmis.iterrows()):
@@ -454,12 +461,13 @@ elif menu == "3. Gelişimsel Rapor":
 
             ax_radar.set_xticks(angles[:-1])
             ax_radar.set_xticklabels(kisa_isimler, size=8)
+            # Legend kutusunu dışarı alalım ki grafik üstüne binmesin
             ax_radar.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8, title="Test Tarihleri")
             
             with col_g1:
                 st.pyplot(fig_radar)
 
-            # Çizgi
+            # Çizgi Grafik (Z-Skor)
             fig_line, ax_line = plt.subplots(figsize=(8, 5))
             z_dates, z_values = [], []
             for _, row in gecmis.iterrows():
@@ -514,6 +522,13 @@ elif menu == "3. Gelişimsel Rapor":
                     with col_tablo: st.dataframe(pd.DataFrame(tablo_verisi), use_container_width=True)
                     with col_grafik:
                         fig_tek, ax_tek = plt.subplots(figsize=(3, 3), subplot_kw=dict(polar=True))
+                        
+                        # --- DÜZELTME BURADA: KÜÇÜK GRAFİKLERDE DE SABİT SKALA ---
+                        ax_tek.set_ylim(0, 10)
+                        ax_tek.set_yticks([5, 10]) # Daha az çizgi yeterli
+                        ax_tek.set_yticklabels(["5", "10"], color="grey", size=6)
+                        # ---------------------------------------------------------
+
                         vals = puanlar_tekil + [puanlar_tekil[0]]
                         ax_tek.plot(angles, vals, color='blue', linewidth=2)
                         ax_tek.fill(angles, vals, color='blue', alpha=0.1)
@@ -521,7 +536,6 @@ elif menu == "3. Gelişimsel Rapor":
                         ax_tek.set_xticklabels(kisa_isimler, size=6)
                         st.pyplot(fig_tek)
                         plt.close(fig_tek)
-
 # --- 4. HAM VERİ ---
 elif menu == "4. Araştırmacı Verisi":
     st.header("Ham Veri")
