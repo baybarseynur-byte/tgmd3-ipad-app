@@ -17,49 +17,7 @@ from fpdf import FPDF
 st.set_page_config(page_title="TGMD-3 PRO (Görsel Rapor)", layout="wide", page_icon="🧬")
 
 DB_FILE = "tgmd3_database_pro.xlsx"
-# -----------------------------------------------------------------------------
-# 🔒 GÜVENLİK (BURAYI EKLEYİN)
-# -----------------------------------------------------------------------------
-def sifre_kontrol():
-    """Kullanıcı doğru şifreyi girene kadar uygulamayı durdurur."""
-    
-    # Session state içinde şifre doğrulama durumu yoksa False yap
-    if "sifre_dogru" not in st.session_state:
-        st.session_state["sifre_dogru"] = False
 
-    # Şifre zaten doğru girildiyse fonksiyon True döner, uygulama açılır
-    if st.session_state["sifre_dogru"]:
-        return True
-
-    # Şifre girilmediyse giriş kutusunu göster
-    st.markdown("## 🔒 Giriş Yapınız")
-    st.write("Bu uygulamaya erişmek için lütfen şifreyi giriniz.")
-    
-    girilen_sifre = st.text_input("Şifre:", type="password")
-
-    if st.button("Giriş Yap"):
-        # Streamlit Secrets'tan şifreyi kontrol et
-        # NOT: Buradaki "giris_sifresi" anahtarını birazdan web sitesine yazacağız.
-        try:
-            dogru_sifre = st.secrets["giris_sifresi"]
-        except keyError:
-            st.error("Sistem Hatası: Şifre sunucuda tanımlanmamış!")
-            return False
-
-        if girilen_sifre == dogru_sifre:
-            st.session_state["sifre_dogru"] = True
-            st.rerun()  # Sayfayı yenileyip uygulamayı aç
-        else:
-            st.error("Hatalı şifre! Lütfen tekrar deneyiniz.")
-    
-    return False
-
-# Eğer şifre kontrolü geçilemezse (False dönerse), kodun geri kalanını çalıştırmayı durdur.
-if not sifre_kontrol():
-    st.stop()
-# -----------------------------------------------------------------------------
-# 🔒 GÜVENLİK SONU
-# -----------------------------------------------------------------------------
 TGMD3_PROTOCOL = {
     "LOKOMOTOR": {
         "Koşu (Run)": ["1. Kol-bacak çapraz hareket-dirsekler bükülü", "2. Ayakların yerden kesilmesi", "3. Ayak ucuyla basma", "4. Havadaki ayak 90 derece bükülü"],
@@ -79,6 +37,43 @@ TGMD3_PROTOCOL = {
         "Duvara Çarptırma (Rolling)": ["1. Topu tutan kolun gövde arkasına salınımı", "2. Atış anında topu tutan kolun çapraz ayağı önde", "3. Topun direk olarak duvara çarptırılması", "4. Topu atan elin atışı göğüs seviyesine kadar takip etmesi"],
     }
 }
+
+# =============================================================================
+# 🔒 GÜVENLİK (ŞİFRE KONTROLÜ)
+# =============================================================================
+def sifre_kontrol():
+    """Kullanıcı doğru şifreyi girene kadar uygulamayı durdurur."""
+    
+    if "sifre_dogru" not in st.session_state:
+        st.session_state["sifre_dogru"] = False
+
+    if st.session_state["sifre_dogru"]:
+        return True
+
+    st.markdown("## 🔒 Giriş Yapınız")
+    st.info("Erişim için şifre gereklidir.")
+    
+    girilen_sifre = st.text_input("Şifre:", type="password")
+
+    if st.button("Giriş Yap"):
+        # Şifreyi st.secrets'tan veya hardcoded olarak kontrol et
+        # Eğer secrets ayarlanmadıysa 'Sporcu2024' varsayılan olur (Test için)
+        try:
+            dogru_sifre = st.secrets["giris_sifresi"]
+        except:
+            dogru_sifre = "Sporcu2024" # Secrets dosyası yoksa yedek şifre
+
+        if girilen_sifre == dogru_sifre:
+            st.session_state["sifre_dogru"] = True
+            st.rerun()
+        else:
+            st.error("Hatalı şifre! Lütfen tekrar deneyiniz.")
+    
+    return False
+
+# Şifre kontrolünü çalıştır
+if not sifre_kontrol():
+    st.stop()
 
 # =============================================================================
 # 2. YARDIMCI FONKSİYONLAR
@@ -126,14 +121,58 @@ def veritabani_yukle():
         return df
     except: return pd.DataFrame()
 
-def veritabani_kaydet(yeni_df_satir, ogrenci_id, test_tarihi):
+# -----------------------------------------------------------------------------
+# 🔥 ÖNEMLİ GÜNCELLEME: VERİ BİRLEŞTİRME (MERGE) FONKSİYONU
+# -----------------------------------------------------------------------------
+def veritabani_kaydet(yeni_veriler_sozluk, ogrenci_id, test_tarihi):
+    """
+    Var olan kaydı bulur, sadece yeni girilen alanları günceller ve puanları yeniden hesaplar.
+    """
     mevcut_df = veritabani_yukle()
-    if not mevcut_df.empty:
-        mevcut_df = mevcut_df[~((mevcut_df["OgrenciID"] == ogrenci_id) & (mevcut_df["TestTarihi"] == str(test_tarihi)))]
-        son_df = pd.concat([mevcut_df, yeni_df_satir], ignore_index=True)
+    test_tarihi_str = str(test_tarihi)
+    
+    # Yeni veri için DataFrame oluştur
+    mask = (mevcut_df["OgrenciID"] == ogrenci_id) & (mevcut_df["TestTarihi"] == test_tarihi_str)
+    
+    if mevcut_df.empty or not mask.any():
+        # Yeni satır ekle
+        yeni_df = pd.DataFrame([yeni_veriler_sozluk])
+        son_df = pd.concat([mevcut_df, yeni_df], ignore_index=True)
     else:
-        son_df = yeni_df_satir
-    with pd.ExcelWriter(DB_FILE, engine="openpyxl") as w: son_df.to_excel(w, index=False)
+        # Kayıt varsa: Mevcut satırı güncelle
+        idx = mevcut_df[mask].index[0]
+        
+        # Yeni değerleri işle
+        for key, value in yeni_veriler_sozluk.items():
+            mevcut_df.at[idx, key] = value
+            
+        # --- OTOMATİK PUAN HESAPLAMA ---
+        cols = mevcut_df.columns
+        
+        # Lokomotor Toplam
+        loko_sum = 0
+        for main_key in TGMD3_PROTOCOL["LOKOMOTOR"].keys():
+            col_name = f"{main_key}_Toplam"
+            if col_name in cols:
+                loko_sum += pd.to_numeric(mevcut_df.at[idx, col_name], errors='coerce') or 0
+        
+        # Nesne Kontrol Toplam
+        nesne_sum = 0
+        for main_key in TGMD3_PROTOCOL["NESNE_KONTROL"].keys():
+            col_name = f"{main_key}_Toplam"
+            if col_name in cols:
+                nesne_sum += pd.to_numeric(mevcut_df.at[idx, col_name], errors='coerce') or 0
+        
+        # Ana puanları güncelle
+        mevcut_df.at[idx, "Lokomotor_Puan"] = loko_sum
+        mevcut_df.at[idx, "Nesne_Puan"] = nesne_sum
+        mevcut_df.at[idx, "Kaba_Motor_Puan"] = loko_sum + nesne_sum
+        
+        son_df = mevcut_df
+
+    with pd.ExcelWriter(DB_FILE, engine="openpyxl") as w:
+        son_df.to_excel(w, index=False)
+    
     return son_df
 
 # =============================================================================
@@ -157,336 +196,4 @@ def create_full_report(ogrenci_bilgi, fig_radar, fig_line, gecmis_df, df_ana):
     pdf.add_page()
     pdf.set_font("Arial", size=10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, tr_chars(f"Öğrenci: {ogrenci_bilgi['Ad']} {ogrenci_bilgi['Soyad']}"), ln=True, align='C')
-    pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, f"ID: {ogrenci_bilgi['ID']} | Cinsiyet: {tr_chars(ogrenci_bilgi['Cinsiyet'])}", ln=True, align='C')
-    pdf.ln(10)
-    
-    # Grafikleri yerleştir
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_radar, \
-         tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_line:
-        
-        fig_radar.savefig(tmp_radar.name, format="png", bbox_inches='tight')
-        fig_line.savefig(tmp_line.name, format="png", bbox_inches='tight')
-        
-        pdf.image(tmp_radar.name, x=60, y=50, w=90)
-        pdf.image(tmp_line.name, x=30, y=150, w=150)
-    
-    try:
-        os.remove(tmp_radar.name)
-        os.remove(tmp_line.name)
-    except: pass
-    
-    # SAYFA 2+: HER TEST İÇİN DETAY
-    tum_testler = list(TGMD3_PROTOCOL["LOKOMOTOR"].keys()) + list(TGMD3_PROTOCOL["NESNE_KONTROL"].keys())
-    
-    for idx, row in gecmis_df.iterrows():
-        pdf.add_page()
-        tarih = row["TestTarihi"]
-        yas_grup = row["Yas_Grup_3Ay"]
-        norm_grubu = df_ana[(df_ana["Cinsiyet"] == row["Cinsiyet"]) & (df_ana["Yas_Grup_3Ay"] == row["Yas_Grup_3Ay"])]
-        
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 10, tr_chars(f"TEST TARİHİ: {tarih}"), ln=True)
-        pdf.set_font("Arial", size=10)
-        pdf.cell(0, 8, tr_chars(f"Yaş Grubu: {yas_grup}"), ln=True)
-        pdf.ln(5)
-        
-        pdf.set_font("Arial", 'B', 9)
-        cols = [50, 20, 20, 20, 25, 20, 35]
-        headers = ["Beceri", "Puan", "Ort", "SS", "Min-Max", "Z-Skor", "Yorum"]
-        for i, h in enumerate(headers): pdf.cell(cols[i], 7, h, 1, 0, 'C')
-        pdf.ln()
-        
-        pdf.set_font("Arial", size=8)
-        # Alt Testler
-        for test_adi in tum_testler:
-            col_key = f"{test_adi}_Toplam"
-            puan = row.get(col_key, 0)
-            if col_key in norm_grubu.columns:
-                ort, std = norm_grubu[col_key].mean(), norm_grubu[col_key].std()
-                mn, mx = norm_grubu[col_key].min(), norm_grubu[col_key].max()
-                z = (puan - ort) / std if std > 0 else 0
-            else: ort, std, mn, mx, z = 0, 0, 0, 0, 0
-            
-            pdf.cell(cols[0], 6, tr_chars(test_adi.split("(")[0].strip())[:30], 1)
-            pdf.cell(cols[1], 6, str(puan), 1, 0, 'C')
-            pdf.cell(cols[2], 6, f"{ort:.1f}", 1, 0, 'C')
-            pdf.cell(cols[3], 6, f"{std:.1f}", 1, 0, 'C')
-            pdf.cell(cols[4], 6, f"{mn}-{mx}", 1, 0, 'C')
-            pdf.cell(cols[5], 6, f"{z:.2f}", 1, 0, 'C')
-            pdf.cell(cols[6], 6, tr_chars(z_skor_yorumla(z)), 1, 0, 'C')
-            pdf.ln()
-            
-        # Toplamlar
-        pdf.ln(2)
-        pdf.set_font("Arial", 'B', 8)
-        toplamlar = [("LOKOMOTOR", "Lokomotor_Puan"), ("NESNE KONTROL", "Nesne_Puan"), ("KABA MOTOR", "Kaba_Motor_Puan")]
-        for etiket, db_col in toplamlar:
-            puan = row[db_col]
-            ort, std = norm_grubu[db_col].mean(), norm_grubu[db_col].std()
-            mn, mx = norm_grubu[db_col].min(), norm_grubu[db_col].max()
-            z = (puan - ort) / std if std > 0 else 0
-            
-            pdf.cell(cols[0], 6, tr_chars(etiket), 1)
-            pdf.cell(cols[1], 6, str(puan), 1, 0, 'C')
-            pdf.cell(cols[2], 6, f"{ort:.1f}", 1, 0, 'C')
-            pdf.cell(cols[3], 6, f"{std:.1f}", 1, 0, 'C')
-            pdf.cell(cols[4], 6, f"{mn}-{mx}", 1, 0, 'C')
-            pdf.cell(cols[5], 6, f"{z:.2f}", 1, 0, 'C')
-            pdf.cell(cols[6], 6, tr_chars(z_skor_yorumla(z)), 1, 0, 'C')
-            pdf.ln()
-            
-    return pdf.output(dest='S').encode('latin-1')
-
-# =============================================================================
-# 4. ARAYÜZ
-# =============================================================================
-menu = st.sidebar.radio("MENÜ", ["1. Test Girişi", "2. Veri Import", "3. Gelişimsel Rapor", "4. Araştırmacı Verisi"])
-df_ana = veritabani_yukle()
-
-# --- 1. TEST GİRİŞİ ---
-if menu == "1. Test Girişi":
-    st.header("📝 Test Giriş Ekranı")
-    mod = st.radio("Kayıt Tipi:", ["Yeni Öğrenci", "Kayıtlı Öğrenci"], horizontal=True)
-    d_ad, d_soyad, d_dt, d_cin = "", "", date(2018,1,1), "Kız"
-    sabit_id = None
-    
-    if mod == "Kayıtlı Öğrenci" and not df_ana.empty:
-        ozet = df_ana[["OgrenciID", "Ad", "Soyad"]].drop_duplicates("OgrenciID")
-        ozet["Gosterim"] = ozet["Ad"] + " " + ozet["Soyad"] + " (" + ozet["OgrenciID"] + ")"
-        secim = st.selectbox("Öğrenci Seç:", ozet["Gosterim"])
-        if secim:
-            sabit_id = secim.split("(")[-1].strip(")")
-            row = df_ana[df_ana["OgrenciID"] == sabit_id].iloc[-1]
-            d_ad, d_soyad = row["Ad"], row["Soyad"]
-            d_dt = pd.to_datetime(row["DogumTarihi"]).date()
-            d_cin = row["Cinsiyet"]
-
-    with st.expander("Kimlik Bilgileri", expanded=True):
-        c1, c2, c3, c4 = st.columns(4)
-        ad = c1.text_input("Ad", d_ad).upper()
-        soyad = c2.text_input("Soyad", d_soyad).upper()
-        cin = c3.selectbox("Cinsiyet", ["Kız", "Erkek"], index=0 if d_cin=="Kız" else 1)
-        dt = c4.date_input("Doğum Tarihi", d_dt)
-        c5, c6, c7, c8 = st.columns(4)
-        tt = c5.date_input("Test Tarihi", date.today())
-        el = c6.selectbox("El", ["Sağ", "Sol"])
-        ayak = c7.selectbox("Ayak", ["Sağ", "Sol"])
-        yer = c8.text_input("Yer", "Spor Salonu")
-        
-        yas_ay = yas_hesapla_ay(dt, tt)
-        final_id = sabit_id if sabit_id else id_uret(ad, soyad, str(dt))
-        st.info(f"ID: {final_id} | Yaş: {yas_ay} Ay")
-
-    if ad and soyad:
-        with st.form("test_form"):
-            ham = {}
-            loko_top = nesne_top = 0
-            st.info("A. LOKOMOTOR")
-            for t_ad, kr in TGMD3_PROTOCOL["LOKOMOTOR"].items():
-                with st.expander(t_ad):
-                    sub = 0
-                    for i, k in enumerate(kr):
-                        st.write(k)
-                        ca, cb = st.columns([1, 1])
-                        d1 = ca.checkbox("D1", key=f"L_{t_ad}_{i}_1")
-                        d2 = cb.checkbox("D2", key=f"L_{t_ad}_{i}_2")
-                        p = int(d1)+int(d2)
-                        sub += p
-                        ham[f"{t_ad}_K{i+1}_D1"] = int(d1)
-                        ham[f"{t_ad}_K{i+1}_D2"] = int(d2)
-                        ham[f"{t_ad}_K{i+1}_Top"] = p
-                    ham[f"{t_ad}_Toplam"] = sub
-                    loko_top += sub
-            
-            st.warning("B. NESNE KONTROL")
-            for t_ad, kr in TGMD3_PROTOCOL["NESNE_KONTROL"].items():
-                with st.expander(t_ad):
-                    sub = 0
-                    for i, k in enumerate(kr):
-                        st.write(k)
-                        ca, cb = st.columns([1, 1])
-                        d1 = ca.checkbox("D1", key=f"N_{t_ad}_{i}_1")
-                        d2 = cb.checkbox("D2", key=f"N_{t_ad}_{i}_2")
-                        p = int(d1)+int(d2)
-                        sub += p
-                        ham[f"{t_ad}_K{i+1}_D1"] = int(d1)
-                        ham[f"{t_ad}_K{i+1}_D2"] = int(d2)
-                        ham[f"{t_ad}_K{i+1}_Top"] = p
-                    ham[f"{t_ad}_Toplam"] = sub
-                    nesne_top += sub
-            
-            km_top = loko_top + nesne_top
-            if st.form_submit_button("KAYDET"):
-                kayit = {
-                    "OgrenciID": final_id, "Ad": ad, "Soyad": soyad, "Cinsiyet": cin,
-                    "DogumTarihi": str(dt), "TestTarihi": str(tt), "El": el, "Ayak": ayak, "Konum": yer,
-                    "Yas_Ay": yas_ay, "Yas_Grup_3Ay": yas_araligi_bul(yas_ay), "Kaynak": "Local",
-                    "Lokomotor_Puan": loko_top, "Nesne_Puan": nesne_top, "Kaba_Motor_Puan": km_top
-                }
-                kayit.update(ham)
-                veritabani_kaydet(pd.DataFrame([kayit]), final_id, tt)
-                st.success("Kaydedildi!")
-
-# --- 2. IMPORT ---
-elif menu == "2. Veri Import":
-    st.header("Excel Import")
-    up = st.file_uploader("Dosya Seç", type=["xlsx"])
-    if up:
-        try:
-            df = pd.read_excel(up)
-            if {"Ad", "Soyad"}.issubset(df.columns):
-                for _, r in df.iterrows():
-                    ad, soy = str(r.get("Ad","-")).strip().upper(), str(r.get("Soyad","-")).strip().upper()
-                    dt, tt = str(r.get("DogumTarihi", date.today())), str(r.get("TestTarihi", date.today()))
-                    uid = id_uret(ad, soy, dt, "EXT")
-                    d = r.to_dict()
-                    d.update({"OgrenciID": uid, "Yas_Ay": yas_hesapla_ay(dt, tt)})
-                    d["Yas_Grup_3Ay"] = yas_araligi_bul(d["Yas_Ay"])
-                    veritabani_kaydet(pd.DataFrame([d]), uid, tt)
-                st.success("İşlem Tamam.")
-                df_ana = veritabani_yukle()
-        except Exception as e: st.error(f"Hata: {e}")
-
-# --- 3. RAPOR (GÜNCELLENMİŞ) ---
-elif menu == "3. Gelişimsel Rapor":
-    st.header("📊 Bireysel Gelişim ve Takip Raporu")
-    df_ana = veritabani_yukle()
-    
-    if not df_ana.empty:
-        ozet = df_ana[["OgrenciID", "Ad", "Soyad"]].drop_duplicates("OgrenciID")
-        ozet["Gosterim"] = ozet["Ad"] + " " + ozet["Soyad"] + " (" + ozet["OgrenciID"] + ")"
-        secim = st.selectbox("Öğrenci Seçiniz:", ozet["Gosterim"])
-        sid = secim.split("(")[-1].strip(")")
-        
-        gecmis = df_ana[df_ana["OgrenciID"] == sid].sort_values("TestTarihi")
-        ogr_info = df_ana[df_ana["OgrenciID"] == sid].iloc[-1]
-        
-        # --- A: TEK BİRLEŞİK GRAFİK ---
-        st.markdown("### A. Grafiksel Genel Bakış")
-        col_g1, col_g2 = st.columns([1, 1])
-
-        # Radar Grafik Hazırlığı
-        test_isimleri = list(TGMD3_PROTOCOL["LOKOMOTOR"].keys()) + list(TGMD3_PROTOCOL["NESNE_KONTROL"].keys())
-        kisa_isimler = [t.split("(")[0].strip() for t in test_isimleri]
-        N = len(kisa_isimler)
-        angles = [n / float(N) * 2 * pi for n in range(N)]
-        angles += [angles[0]]
-        
-        # Tek Figür - Tüm Ölçümler Üst Üste
-        fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
-        colors = cm.viridis(np.linspace(0, 1, len(gecmis))) # Farklı renkler
-        
-        for idx, (index, row) in enumerate(gecmis.iterrows()):
-            puanlar = [row.get(f"{t}_Toplam", 0) for t in test_isimleri]
-            values = puanlar + [puanlar[0]]
-            # Tüm ölçümleri aynı grafiğe ekliyoruz:
-            ax_radar.plot(angles, values, linewidth=2, linestyle='solid', label=str(row["TestTarihi"]), color=colors[idx])
-            ax_radar.fill(angles, values, color=colors[idx], alpha=0.05)
-
-        ax_radar.set_xticks(angles[:-1])
-        ax_radar.set_xticklabels(kisa_isimler, size=8)
-        # Lejantı dışarı al
-        ax_radar.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8, title="Test Tarihleri")
-        
-        with col_g1:
-            st.caption("Performans Karşılaştırması (Tüm Ölçümler)")
-            st.pyplot(fig_radar)
-
-        # Çizgi Grafik Hazırlığı
-        fig_line, ax_line = plt.subplots(figsize=(8, 5))
-        z_dates, z_values = [], []
-        for _, row in gecmis.iterrows():
-            norm = df_ana[(df_ana["Cinsiyet"]==row["Cinsiyet"]) & (df_ana["Yas_Grup_3Ay"]==row["Yas_Grup_3Ay"])]
-            m, s = norm["Kaba_Motor_Puan"].mean(), norm["Kaba_Motor_Puan"].std()
-            z = (row["Kaba_Motor_Puan"] - m) / s if s > 0 else 0
-            z_dates.append(pd.to_datetime(row["TestTarihi"]))
-            z_values.append(z)
-        
-        ax_line.plot(z_dates, z_values, marker='o', linestyle='-', color='blue')
-        ax_line.axhline(0, color='gray', linestyle='--', label="Ortalama")
-        ax_line.axhspan(-1, 1, color='green', alpha=0.1, label="Normal")
-        ax_line.set_ylabel("Z-Skor")
-        ax_line.set_xlabel("Tarih")
-        ax_line.legend()
-        
-        with col_g2:
-            st.caption("Z-Skor Gelişimi")
-            st.pyplot(fig_line)
-        
-        st.divider()
-        
-        # --- PDF İNDİRME ---
-        st.subheader("B. Raporlama")
-        pdf_data = create_full_report(
-            {"Ad": ogr_info["Ad"], "Soyad": ogr_info["Soyad"], "ID": sid, "Cinsiyet": ogr_info["Cinsiyet"]},
-            fig_radar, fig_line, gecmis, df_ana
-        )
-        st.download_button("📄 TÜM RAPORU PDF OLARAK İNDİR", pdf_data, f"Rapor_{sid}.pdf", "application/pdf")
-
-        # --- C: DETAYLI İNCELEME (HER TEST İÇİN GRAFİK + TABLO) ---
-        st.markdown("### C. Detaylı Veri İnceleme (Her Ölçüm İçin Ayrı Grafik)")
-        
-        for idx, row in gecmis.iterrows():
-            with st.expander(f"🗓️ Test Tarihi: {row['TestTarihi']} (Detaylar)", expanded=False):
-                col_tablo, col_grafik = st.columns([2, 1])
-                
-                # Tablo Verisi Hazırla
-                norm_grubu = df_ana[(df_ana["Cinsiyet"] == row["Cinsiyet"]) & (df_ana["Yas_Grup_3Ay"] == row["Yas_Grup_3Ay"])]
-                tablo_verisi = []
-                
-                # Sadece bu ölçümün radar verisi
-                puanlar_tekil = []
-                maks_puanlar = []
-
-                for t in test_isimleri:
-                    col = f"{t}_Toplam"
-                    p = row.get(col, 0)
-                    puanlar_tekil.append(p)
-                    
-                    if t in TGMD3_PROTOCOL["LOKOMOTOR"]: mx_p = len(TGMD3_PROTOCOL["LOKOMOTOR"][t])*2
-                    else: mx_p = len(TGMD3_PROTOCOL["NESNE_KONTROL"][t])*2
-                    maks_puanlar.append(mx_p)
-                    
-                    if col in norm_grubu.columns:
-                        mn, mx = norm_grubu[col].min(), norm_grubu[col].max()
-                        ort, std = norm_grubu[col].mean(), norm_grubu[col].std()
-                        z = (p - ort) / std if std > 0 else 0
-                    else: mn, mx, ort, std, z = 0, 0, 0, 0, 0
-                    
-                    tablo_verisi.append({
-                        "Beceri": t.split("(")[0], 
-                        "Puan": p, 
-                        "Ort": round(ort,1), 
-                        "SS": round(std,1), 
-                        "Min-Max": f"{mn}-{mx}", 
-                        "Z": round(z,2),
-                        "Yorum": z_skor_yorumla(z)
-                    })
-                
-                # Ekran Tablosu
-                with col_tablo:
-                    st.dataframe(pd.DataFrame(tablo_verisi), use_container_width=True)
-
-                # Ekran Grafiği (Tekil)
-                with col_grafik:
-                    fig_tek, ax_tek = plt.subplots(figsize=(3, 3), subplot_kw=dict(polar=True))
-                    vals = puanlar_tekil + [puanlar_tekil[0]]
-                    mx_vals = maks_puanlar + [maks_puanlar[0]]
-                    
-                    ax_tek.plot(angles, vals, color='blue', linewidth=2)
-                    ax_tek.fill(angles, vals, color='blue', alpha=0.1)
-                    ax_tek.plot(angles, mx_vals, color='gray', linestyle='--', linewidth=0.5)
-                    ax_tek.set_xticks(angles[:-1])
-                    ax_tek.set_xticklabels(kisa_isimler, size=6)
-                    ax_tek.set_title(f"{row['TestTarihi']}", size=10)
-                    st.pyplot(fig_tek)
-                    plt.close(fig_tek) # Bellek temizliği
-
-# --- 4. HAM VERİ ---
-elif menu == "4. Araştırmacı Verisi":
-    st.header("Ham Veri")
-    df_ana = veritabani_yukle()
-    if not df_ana.empty:
-        st.dataframe(df_ana)
+    pdf.cell(0, 10, tr_chars(f"Öğrenci: {ogrenci_bilgi['Ad']} {ogrenci_bilgi['Soyad']}"), ln=True, align='C
