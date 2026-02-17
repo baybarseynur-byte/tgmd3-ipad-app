@@ -17,3 +17,4 @@ matplotlib
 fpdf
 openpyxl
 xlsxwriter
+scipy
