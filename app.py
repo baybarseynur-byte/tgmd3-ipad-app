@@ -7,13 +7,14 @@ import hashlib
 from datetime import date
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+from fpdf import FPDF
 
 # =============================================================================
 # 1. AYARLAR VE PROTOKOL
 # =============================================================================
-st.set_page_config(page_title="TGMD-3 PRO: Tam Protokol", layout="wide", page_icon="🧬")
+st.set_page_config(page_title="TGMD-3 PRO: Master Sürüm", layout="wide", page_icon="🎓")
 
-FILE_NAME = "tgmd3_final_db.xlsx"
+FILE_NAME = "tgmd3_master_db.xlsx"
 
 PROTOCOL = {
     "LOKOMOTOR": {
@@ -35,29 +36,25 @@ PROTOCOL = {
     }
 }
 
-# --- SÜTUN YAPILANDIRMASI ---
-# Her madde için T1 (Trial 1) ve T2 (Trial 2) saklanacak
+# --- Puan Yapılandırması ---
+MAX_SCORES_SUBTEST = {} 
 ITEM_COLUMNS = []
-MAX_SCORES_SUBTEST = {} # Alt test bazlı max puan (Örn: Koşu Max = 8)
 
 for domain in PROTOCOL:
     for test, items in PROTOCOL[domain].items():
-        # Max Puan: Madde Sayısı * 2 (Çünkü her madde 2 deneme)
         MAX_SCORES_SUBTEST[test] = len(items) * 2
         prefix = "L" if domain == "LOKOMOTOR" else "N"
         for i in range(len(items)):
-            ITEM_COLUMNS.append(f"{prefix}_{test}_{i}_T1") # Deneme 1
-            ITEM_COLUMNS.append(f"{prefix}_{test}_{i}_T2") # Deneme 2
+            ITEM_COLUMNS.append(f"{prefix}_{test}_{i}_T1")
+            ITEM_COLUMNS.append(f"{prefix}_{test}_{i}_T2")
 
-# Toplam Puan Sütunları
 SCORE_COLUMNS = [f"{test}_Toplam" for domain in PROTOCOL for test in PROTOCOL[domain]]
 MAIN_SCORES = ["Lokomotor_Genel_Toplam", "Nesne_Genel_Toplam", "Kaba_Motor_Toplam"]
-
 BASE_COLUMNS = ['TestID', 'OgrenciID', 'Ad', 'Soyad', 'Cinsiyet', 'DogumTarihi', 'TestTarihi', 'TestYeri', 'TercihEl', 'TercihAyak', 'YasGrubu', 'YasAy', 'SonIslemTarihi']
 FULL_DB_COLUMNS = BASE_COLUMNS + MAIN_SCORES + SCORE_COLUMNS + ITEM_COLUMNS
 
 # =============================================================================
-# 2. YARDIMCI FONKSİYONLAR
+# 2. FONKSİYONLAR
 # =============================================================================
 def generate_ids(ad, soyad, dogum_tarihi, test_tarihi):
     tr_map = str.maketrans("ğĞıİşŞüÜöÖçÇ", "gGiIsSuUoOcC")
@@ -73,10 +70,8 @@ def load_db():
     if not os.path.exists(FILE_NAME): return pd.DataFrame(columns=FULL_DB_COLUMNS)
     try:
         df = pd.read_excel(FILE_NAME)
-        # Eksik sütun tamamlama
         for col in FULL_DB_COLUMNS:
             if col not in df.columns: df[col] = "" if col in BASE_COLUMNS else 0
-        # String dönüşümleri
         for col in ['DogumTarihi', 'TestTarihi', 'Ad', 'Soyad', 'Cinsiyet', 'TestYeri', 'TercihEl', 'TercihAyak']:
             if col in df.columns: df[col] = df[col].astype(str).replace('nan', '')
         return df.fillna(0)
@@ -93,7 +88,6 @@ def save_to_db(data_dict):
         for key, val in data_dict.items(): df.at[idx, key] = val
     else:
         df = pd.concat([df, pd.DataFrame([data_dict])], ignore_index=True)
-        
     with pd.ExcelWriter(FILE_NAME, engine='openpyxl') as writer: df.to_excel(writer, index=False)
     return True
 
@@ -108,49 +102,25 @@ def calculate_age(birth_date, test_date):
     return months, f"{q}-{q+2} Ay"
 
 def get_z_comment(z):
-    if z >= 1.5: return "Çok İleri (Üstün)"
-    elif 0.5 <= z < 1.5: return "Ortalama Üstü"
-    elif -0.5 <= z < 0.5: return "Ortalama (Normal)"
-    elif -1.5 <= z < -0.5: return "Ortalama Altı"
-    else: return "Gelişimsel Gecikme Riski"
+    if z >= 1.5: return "Çok İleri"
+    elif 0.5 <= z < 1.5: return "İleri"
+    elif -0.5 <= z < 0.5: return "Normal"
+    elif -1.5 <= z < -0.5: return "Geliştirilmeli"
+    else: return "Risk Grubu"
 
-def draw_bell_curve(z_score, title, ax):
+def calculate_full_stats_table(student_row, full_df):
     """
-    Belirtilen Z-Skoru için Normal Dağılım Grafiği çizer.
+    Hem Alt Testleri hem Ana Toplamları tek bir tabloda birleştirir.
     """
-    x = np.linspace(-4, 4, 1000)
-    y = stats.norm.pdf(x, 0, 1)
-    
-    # Eğriyi çiz
-    ax.plot(x, y, color='black', lw=2)
-    ax.fill_between(x, y, alpha=0.1, color='gray')
-    
-    # Z-Skoru çizgisi
-    ax.axvline(z_score, color='red', linestyle='--', lw=2, label=f'Öğrenci: {z_score}')
-    
-    # Bölgeleri renklendir
-    # Ortalama Alanı (-1 ile +1 arası)
-    ax.fill_between(x, y, where=(x >= -1) & (x <= 1), color='green', alpha=0.2, label='Normal Aralık')
-    
-    ax.set_title(title, fontsize=10)
-    ax.set_yticks([]) # Y ekseni değerlerini gizle
-    ax.legend(loc='upper right', fontsize=8)
-    
-    # X ekseni etiketleri
-    ax.set_xticks([-3, -2, -1, 0, 1, 2, 3])
-    ax.set_xticklabels(['-3SS', '-2SS', '-1SS', 'Ort', '+1SS', '+2SS', '+3SS'])
-
-def calculate_full_stats(student_row, full_df):
-    """
-    Hem alt testler hem de Ana Toplamlar (Loko, Nesne, Kaba Motor) için istatistik üretir.
-    """
+    # Norm Grubu: Aynı Cinsiyet + Aynı Yaş Grubu
     norm_group = full_df[
         (full_df['Cinsiyet'] == student_row['Cinsiyet']) & 
         (full_df['YasGrubu'] == student_row['YasGrubu'])
     ]
     
-    # 1. Alt Test İstatistikleri
-    subtest_stats = []
+    rows = []
+    
+    # 1. ALT TESTLER
     for domain in PROTOCOL:
         for test in PROTOCOL[domain]:
             col = f"{test}_Toplam"
@@ -164,31 +134,27 @@ def calculate_full_stats(student_row, full_df):
             else:
                 ort, ss, z = puan, 0, 0
                 
-            subtest_stats.append({
+            rows.append({
                 "Kategori": "Alt Test",
-                "Başlık": test,
+                "Test Adı": test,
                 "Puan": int(puan),
                 "Max": max_p,
                 "Grup Ort.": round(ort, 2),
+                "SS": round(ss, 2),
                 "Z-Skoru": round(z, 2),
                 "Yorum": get_z_comment(z)
             })
             
-    # 2. Ana Alan İstatistikleri (Loko, Nesne, Kaba Motor)
-    main_stats = []
-    
-    # Hesaplama Kolaylığı İçin Mapping
+    # 2. ANA ALANLAR
     mapping = {
-        "Lokomotor Beceriler": "Lokomotor_Genel_Toplam",
-        "Nesne Kontrol Becerileri": "Nesne_Genel_Toplam",
+        "Lokomotor Toplam": "Lokomotor_Genel_Toplam",
+        "Nesne Kontrol Toplam": "Nesne_Genel_Toplam",
         "KABA MOTOR TOPLAM": "Kaba_Motor_Toplam"
     }
     
-    # Max Puanlar (Ana Alanlar İçin)
     max_loko = sum([MAX_SCORES_SUBTEST[t] for t in PROTOCOL["LOKOMOTOR"]])
     max_nesne = sum([MAX_SCORES_SUBTEST[t] for t in PROTOCOL["NESNE_KONTROL"]])
-    max_kaba = max_loko + max_nesne
-    max_map = {"Lokomotor Beceriler": max_loko, "Nesne Kontrol Becerileri": max_nesne, "KABA MOTOR TOPLAM": max_kaba}
+    max_map = {"Lokomotor Toplam": max_loko, "Nesne Kontrol Toplam": max_nesne, "KABA MOTOR TOPLAM": max_loko + max_nesne}
 
     for label, col in mapping.items():
         puan = float(student_row.get(col, 0))
@@ -200,37 +166,35 @@ def calculate_full_stats(student_row, full_df):
         else:
             ort, ss, z = puan, 0, 0
             
-        main_stats.append({
-            "Kategori": "Ana Alan",
-            "Başlık": label,
+        rows.append({
+            "Kategori": "ANA TOPLAM",
+            "Test Adı": label,
             "Puan": int(puan),
             "Max": max_map[label],
             "Grup Ort.": round(ort, 2),
+            "SS": round(ss, 2),
             "Z-Skoru": round(z, 2),
             "Yorum": get_z_comment(z)
         })
-
-    return pd.DataFrame(subtest_stats), pd.DataFrame(main_stats)
+        
+    return pd.DataFrame(rows)
 
 # =============================================================================
 # 3. ARAYÜZ
 # =============================================================================
 st.sidebar.title("TGMD-3 PRO")
-menu = st.sidebar.radio("MENÜ", ["1. Test Girişi (Çift Deneme)", "2. Kapsamlı Raporlama", "3. Veri Tabanı"])
+menu = st.sidebar.radio("MENÜ", ["1. Test Girişi", "2. Bireysel & Gelişim Raporu", "3. Veri Tabanı"])
 
-if menu == "1. Test Girişi (Çift Deneme)":
-    st.header("📋 TGMD-3 Test Girişi (Prosedürel Uyumlu)")
-    st.info("ℹ️ Protokol Gereği: Her beceri kriteri için öğrenciye 2 deneme hakkı verilir. Her deneme Başarılı (1) veya Başarısız (0) olarak işaretlenir.")
-    
-    mode = st.radio("Mod:", ["📂 Kayıtlı Öğrenci", "➕ Yeni Öğrenci"], horizontal=True)
+if menu == "1. Test Girişi":
+    st.header("📋 Test Veri Girişi")
+    mode = st.radio("Seçim:", ["📂 Kayıtlı Öğrenci", "➕ Yeni Öğrenci"], horizontal=True)
     df = load_db()
     
-    # Varsayılanlar
     ad, soyad, cinsiyet = "", "", "Kız"
     dt = date(2018, 1, 1)
-    test_tarihi = date.today(); test_yeri = ""; el = "Sağ"; ayak = "Sağ"
     ogrenci_id = None
     
+    # Kimlik Bilgileri
     if mode == "📂 Kayıtlı Öğrenci":
         if df.empty: st.warning("Kayıt yok."); st.stop()
         uniqs = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi']].drop_duplicates(subset='OgrenciID')
@@ -240,128 +204,76 @@ if menu == "1. Test Girişi (Çift Deneme)":
             rec = uniqs[uniqs['Etiket'] == secim].iloc[0]
             ad, soyad, dt, ogrenci_id = rec['Ad'], rec['Soyad'], pd.to_datetime(rec['DogumTarihi']).date(), rec['OgrenciID']
             last = df[df['OgrenciID'] == ogrenci_id].iloc[-1]
-            cinsiyet, test_yeri, el, ayak = last['Cinsiyet'], last['TestYeri'], last['TercihEl'], last['TercihAyak']
+            cinsiyet = last['Cinsiyet']
     else:
         c1,c2,c3,c4 = st.columns(4)
         ad = c1.text_input("Ad").strip().upper(); soyad = c2.text_input("Soyad").strip().upper()
         dt = c3.date_input("DT", date(2018, 1, 1)); cinsiyet = c4.radio("Cinsiyet", ["Kız", "Erkek"], horizontal=True)
 
+    # Test Detayları
     if ad and soyad:
-        st.markdown("---")
+        st.divider()
         r1,r2,r3,r4 = st.columns(4)
-        test_tarihi = r1.date_input("Test Tarihi", date.today()); test_yeri = r2.text_input("Yer", test_yeri)
-        el = r3.selectbox("El", ["Sağ","Sol"], index=0 if el=="Sağ" else 1)
-        ayak = r4.selectbox("Ayak", ["Sağ","Sol"], index=0 if ayak=="Sağ" else 1)
+        test_tarihi = r1.date_input("Test Tarihi", date.today()); test_yeri = r2.text_input("Yer").upper()
+        el = r3.selectbox("El", ["Sağ","Sol"]); ayak = r4.selectbox("Ayak", ["Sağ","Sol"])
         
         if not ogrenci_id: ogrenci_id, test_id = generate_ids(ad, soyad, dt, test_tarihi)
         else: test_id = generate_ids(ad, soyad, dt, test_tarihi)[1]
         
         exist = {}
         if not df.empty and test_id in df['TestID'].values:
-            st.warning("⚠️ Bu tarihte kayıt var. Güncelleme yapıyorsunuz."); exist = df[df['TestID'] == test_id].iloc[0].to_dict()
+            st.warning("⚠️ Güncelleme Modu"); exist = df[df['TestID'] == test_id].iloc[0].to_dict()
 
-        # --- PUANLAMA LOOP ---
-        col_l, col_n = st.columns(2)
-        form_data = {}
+        # Puanlama
+        col_l, col_n = st.columns(2); form_data = {}; sub_totals = {}
+        l_total = 0; n_total = 0
         
-        # Puan Sayaçları
-        loko_grand_total = 0
-        nesne_grand_total = 0
-        
-        subtest_totals = {} # Her alt testin toplamı için
-
-        # LOKOMOTOR
         with col_l:
-            st.subheader("🏃 LOKOMOTOR")
+            st.info("🏃 LOKOMOTOR")
             for t_name, items in PROTOCOL["LOKOMOTOR"].items():
-                st.markdown(f"**{t_name}**")
-                sub_total = 0
-                with st.expander(f"{t_name} Kriterleri", expanded=False):
+                s_tot = 0
+                with st.expander(t_name):
                     for i, item in enumerate(items):
-                        # İki Deneme İçin Keyler
-                        k1 = f"L_{t_name}_{i}_T1"
-                        k2 = f"L_{t_name}_{i}_T2"
-                        
-                        # Checkboxlar
-                        c_row1, c_row2 = st.columns([3, 1])
-                        c_row1.write(f"{i+1}. {item}")
-                        
-                        # Deneme 1 ve 2
-                        val1 = c_row2.checkbox("D1", value=bool(exist.get(k1, 0)), key=f"{test_id}_{k1}")
-                        val2 = c_row2.checkbox("D2", value=bool(exist.get(k2, 0)), key=f"{test_id}_{k2}")
-                        
-                        # Veriye kaydet
-                        form_data[k1] = int(val1)
-                        form_data[k2] = int(val2)
-                        
-                        # Toplam hesabı
-                        item_score = int(val1) + int(val2)
-                        sub_total += item_score
-                
-                # Alt test toplamını kaydet
-                subtest_totals[f"{t_name}_Toplam"] = sub_total
-                loko_grand_total += sub_total
-                st.info(f"{t_name} Puanı: {sub_total} / {MAX_SCORES_SUBTEST[t_name]}")
-
-        # NESNE KONTROL
+                        k1 = f"L_{t_name}_{i}_T1"; k2 = f"L_{t_name}_{i}_T2"
+                        c1, c2 = st.columns([3,1])
+                        c1.write(item)
+                        v1 = c2.checkbox("D1", bool(exist.get(k1,0)), key=f"{test_id}_{k1}")
+                        v2 = c2.checkbox("D2", bool(exist.get(k2,0)), key=f"{test_id}_{k2}")
+                        form_data[k1]=int(v1); form_data[k2]=int(v2); s_tot += int(v1)+int(v2)
+                sub_totals[f"{t_name}_Toplam"] = s_tot; l_total += s_tot
+        
         with col_n:
-            st.subheader("🏀 NESNE KONTROL")
+            st.info("🏀 NESNE KONTROL")
             for t_name, items in PROTOCOL["NESNE_KONTROL"].items():
-                st.markdown(f"**{t_name}**")
-                sub_total = 0
-                with st.expander(f"{t_name} Kriterleri", expanded=False):
+                s_tot = 0
+                with st.expander(t_name):
                     for i, item in enumerate(items):
-                        k1 = f"N_{t_name}_{i}_T1"
-                        k2 = f"N_{t_name}_{i}_T2"
-                        
-                        c_row1, c_row2 = st.columns([3, 1])
-                        c_row1.write(f"{i+1}. {item}")
-                        
-                        val1 = c_row2.checkbox("D1", value=bool(exist.get(k1, 0)), key=f"{test_id}_{k1}")
-                        val2 = c_row2.checkbox("D2", value=bool(exist.get(k2, 0)), key=f"{test_id}_{k2}")
-                        
-                        form_data[k1] = int(val1)
-                        form_data[k2] = int(val2)
-                        item_score = int(val1) + int(val2)
-                        sub_total += item_score
-                
-                subtest_totals[f"{t_name}_Toplam"] = sub_total
-                nesne_grand_total += sub_total
-                st.info(f"{t_name} Puanı: {sub_total} / {MAX_SCORES_SUBTEST[t_name]}")
+                        k1 = f"N_{t_name}_{i}_T1"; k2 = f"N_{t_name}_{i}_T2"
+                        c1, c2 = st.columns([3,1])
+                        c1.write(item)
+                        v1 = c2.checkbox("D1", bool(exist.get(k1,0)), key=f"{test_id}_{k1}")
+                        v2 = c2.checkbox("D2", bool(exist.get(k2,0)), key=f"{test_id}_{k2}")
+                        form_data[k1]=int(v1); form_data[k2]=int(v2); s_tot += int(v1)+int(v2)
+                sub_totals[f"{t_name}_Toplam"] = s_tot; n_total += s_tot
 
-        # ANA TOPLAMLARI HESAPLA
-        grand_totals = {
-            "Lokomotor_Genel_Toplam": loko_grand_total,
-            "Nesne_Genel_Toplam": nesne_grand_total,
-            "Kaba_Motor_Toplam": loko_grand_total + nesne_grand_total
-        }
-
-        st.success(f"📊 ÖZET: Lokomotor ({loko_grand_total}) + Nesne ({nesne_grand_total}) = Kaba Motor ({loko_grand_total + nesne_grand_total})")
-
-        if st.button("💾 TÜM SONUÇLARI KAYDET", type="primary", use_container_width=True):
+        if st.button("💾 KAYDET", type="primary", use_container_width=True):
             ay, grup = calculate_age(dt, test_tarihi)
             rec = {
-                "TestID": test_id, "OgrenciID": ogrenci_id,
-                "Ad": ad, "Soyad": soyad, "DogumTarihi": dt, "Cinsiyet": cinsiyet,
-                "TestTarihi": test_tarihi, "TestYeri": test_yeri,
-                "TercihEl": el, "TercihAyak": ayak,
-                "YasAy": ay, "YasGrubu": grup,
-                "SonIslemTarihi": str(date.today())
+                "TestID": test_id, "OgrenciID": ogrenci_id, "Ad": ad, "Soyad": soyad, "DogumTarihi": dt, 
+                "Cinsiyet": cinsiyet, "TestTarihi": test_tarihi, "TestYeri": test_yeri, "TercihEl": el, 
+                "TercihAyak": ayak, "YasAy": ay, "YasGrubu": grup, "SonIslemTarihi": str(date.today()),
+                "Lokomotor_Genel_Toplam": l_total, "Nesne_Genel_Toplam": n_total, 
+                "Kaba_Motor_Toplam": l_total + n_total
             }
-            rec.update(form_data)
-            rec.update(subtest_totals)
-            rec.update(grand_totals)
-            
-            save_to_db(rec)
-            st.balloons()
-            st.success("Test başarıyla veritabanına işlendi.")
+            rec.update(form_data); rec.update(sub_totals)
+            save_to_db(rec); st.success("Kaydedildi!"); st.balloons()
 
-elif menu == "2. Kapsamlı Raporlama":
-    st.header("📊 Bireysel Performans ve Norm Raporu")
+elif menu == "2. Bireysel & Gelişim Raporu":
+    st.header("📊 Detaylı Performans Karnesi")
     df = load_db()
     if df.empty: st.warning("Veri yok."); st.stop()
-    
-    # Seçimler
+
+    # Öğrenci Seçimi
     uniqs = df[['OgrenciID', 'Ad', 'Soyad']].drop_duplicates(subset='OgrenciID')
     uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad']
     secim = st.selectbox("Öğrenci:", uniqs['Etiket'])
@@ -370,76 +282,115 @@ elif menu == "2. Kapsamlı Raporlama":
         oid = uniqs[uniqs['Etiket'] == secim].iloc[0]['OgrenciID']
         history = df[df['OgrenciID'] == oid].sort_values('TestTarihi')
         
-        t_date = st.selectbox("Test Tarihi:", history['TestTarihi'].tolist(), index=len(history)-1)
-        record = history[history['TestTarihi'] == t_date].iloc[0]
+        # Test Tarihi Seçimi
+        dates = history['TestTarihi'].tolist()
+        s_date = st.selectbox("Raporlanacak Test Tarihi:", dates, index=len(dates)-1)
         
-        # İstatistikleri Hesapla
-        sub_stats, main_stats = calculate_full_stats(record, df)
+        curr_rec = history[history['TestTarihi'] == s_date].iloc[0]
         
-        # --- TAB 1: GENEL BECERİ DEĞERLENDİRMESİ ---
-        st.subheader(f"Rapor: {record['Ad']} {record['Soyad']} ({t_date}) - {record['YasGrubu']}")
+        # --- İSTATİSTİK HESAPLAMA ---
+        stats_table = calculate_full_stats_table(curr_rec, df)
         
-        c1, c2 = st.columns([1, 2])
+        # --- EKRAN GÖSTERİMİ ---
+        st.subheader(f"Öğrenci: {curr_rec['Ad']} {curr_rec['Soyad']} | Tarih: {s_date}")
+        st.markdown(f"**Grup:** {curr_rec['Cinsiyet']} - {curr_rec['YasGrubu']} | **Yer:** {curr_rec['TestYeri']}")
         
-        with c1:
-            st.markdown("### 🏆 Kaba Motor Karnesi")
+        # 1. TABLO (Renkli Z-Skor ile)
+        def color_z(val):
+            color = 'black'
+            if val < -1: color = 'red'
+            elif val > 1: color = 'green'
+            return f'color: {color}'
             
-            # Kaba Motor Satırını Bul
-            km_row = main_stats[main_stats['Başlık'] == "KABA MOTOR TOPLAM"].iloc[0]
-            
-            st.metric("Kaba Motor Toplam Puan", f"{km_row['Puan']} / {km_row['Max']}")
-            st.metric("Z-Skoru", f"{km_row['Z-Skoru']}")
-            
-            st.info(f"**Yorum:** {km_row['Yorum']}")
-            st.markdown(f"""
-            *Bu öğrenci, kendi yaş ve cinsiyet grubuna göre **{km_row['Yorum']}** düzeyindedir.*
-            """)
-
-        with c2:
-            st.markdown("### 🔔 Norm Dağılım Grafiği (Çan Eğrisi)")
-            # Bell Curve Çizimi
-            fig_bell, ax_bell = plt.subplots(figsize=(8, 4))
-            draw_bell_curve(float(km_row['Z-Skoru']), "Kaba Motor Becerisi - Popülasyondaki Yeri", ax_bell)
-            st.pyplot(fig_bell)
-
-        # --- TAB 2: DETAYLI TABLOLAR ---
-        st.markdown("---")
-        t1, t2 = st.tabs(["📌 Ana Alan Puanları", "🧩 Alt Test Detayları"])
+        st.markdown("### 1. Detaylı Performans İstatistikleri")
+        st.dataframe(
+            stats_table.style.map(color_z, subset=['Z-Skoru']).format("{:.2f}", subset=['Grup Ort.', 'SS', 'Z-Skoru']),
+            use_container_width=True,
+            hide_index=True
+        )
         
-        with t1:
-            st.dataframe(main_stats.style.format({"Grup Ort.": "{:.2f}", "Z-Skoru": "{:.2f}"}), use_container_width=True, hide_index=True)
-            
-            # Alan Grafiği
-            fig_main, ax_main = plt.subplots(figsize=(10, 4))
-            x = np.arange(len(main_stats))
-            ax_main.bar(x - 0.2, main_stats['Puan'], 0.4, label='Öğrenci', color='#3498db')
-            ax_main.bar(x + 0.2, main_stats['Grup Ort.'], 0.4, label='Grup Ort.', color='#95a5a6')
-            ax_main.set_xticks(x)
-            ax_main.set_xticklabels(main_stats['Başlık'])
-            ax_main.legend()
-            ax_main.set_title("Lokomotor vs Nesne Kontrol Karşılaştırması")
-            st.pyplot(fig_main)
-
-        with t2:
-            st.dataframe(sub_stats.style.format({"Grup Ort.": "{:.2f}", "Z-Skoru": "{:.2f}"}), use_container_width=True, hide_index=True)
-            
+        # 2. GRAFİKLER (Yan Yana)
+        st.markdown("### 2. Görsel Analiz")
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
             # Alt Test Grafiği
-            fig_sub, ax_sub = plt.subplots(figsize=(12, 5))
-            x_sub = np.arange(len(sub_stats))
-            ax_sub.bar(x_sub, sub_stats['Puan'], color='#e74c3c', alpha=0.7, label='Öğrenci Puanı')
-            ax_sub.plot(x_sub, sub_stats['Grup Ort.'], color='black', marker='o', linestyle='--', label='Grup Ortalaması')
-            ax_sub.set_xticks(x_sub)
-            ax_sub.set_xticklabels(sub_stats['Başlık'], rotation=45, ha="right")
-            ax_sub.legend()
-            ax_sub.set_title("Alt Test Bazlı Performans")
-            st.pyplot(fig_sub)
+            sub_data = stats_table[stats_table['Kategori'] == "Alt Test"]
+            fig1, ax1 = plt.subplots(figsize=(8, 5))
+            x = np.arange(len(sub_data))
+            ax1.bar(x - 0.2, sub_data['Puan'], 0.4, label='Öğrenci', color='#3498db')
+            ax1.bar(x + 0.2, sub_data['Grup Ort.'], 0.4, label='Grup Ort.', color='gray', alpha=0.5)
+            ax1.set_xticks(x); ax1.set_xticklabels(sub_data['Test Adı'], rotation=45, ha='right')
+            ax1.legend(); ax1.set_title("Alt Test Performansları")
+            st.pyplot(fig1)
+            
+        with col_g2:
+            # Norm Eğrisi (Kaba Motor İçin)
+            km_z = float(stats_table[stats_table['Test Adı'] == "KABA MOTOR TOPLAM"]['Z-Skoru'].values[0])
+            fig2, ax2 = plt.subplots(figsize=(8, 5))
+            x_norm = np.linspace(-4, 4, 100)
+            y_norm = stats.norm.pdf(x_norm, 0, 1)
+            ax2.plot(x_norm, y_norm, 'k')
+            ax2.fill_between(x_norm, y_norm, alpha=0.1)
+            ax2.axvline(km_z, color='red', linestyle='--', label=f'Öğrenci (Z={km_z})')
+            ax2.legend(); ax2.set_title("Genel Gelişim (Norm Eğrisi)")
+            ax2.set_yticks([])
+            st.pyplot(fig2)
+            
+        # 3. GELİŞİM GRAFİĞİ (Varsa)
+        if len(history) > 1:
+            st.markdown("### 3. Zaman İçindeki Gelişim")
+            fig3, ax3 = plt.subplots(figsize=(10, 4))
+            ax3.plot(history['TestTarihi'], history['Lokomotor_Genel_Toplam'], 'o-', label='Lokomotor')
+            ax3.plot(history['TestTarihi'], history['Nesne_Genel_Toplam'], 's-', label='Nesne Kontrol')
+            ax3.legend(); ax3.grid(True, linestyle='--')
+            st.pyplot(fig3)
+
+        # PDF İNDİRME
+        if st.button("📄 PDF RAPORU İNDİR"):
+            pdf = FPDF()
+            pdf.add_page()
+            tr = str.maketrans("ğĞıİşŞüÜöÖçÇ", "gGiIsSuUoOcC")
+            
+            # Başlık
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 10, "TGMD-3 DETAYLI PERFORMANS RAPORU", ln=True, align="C")
+            
+            # Bilgi
+            pdf.set_font("Arial", size=10)
+            txt = f"Ad Soyad: {curr_rec['Ad']} {curr_rec['Soyad']}\nTarih: {s_date} | Yas Grubu: {curr_rec['YasGrubu']}"
+            pdf.multi_cell(0, 5, txt.translate(tr))
+            pdf.ln(5)
+            
+            # Tablo
+            pdf.set_font("Arial", "B", 8)
+            headers = ["Test Adi", "Puan", "Max", "Ort", "SS", "Z", "Yorum"]
+            w = [45, 15, 15, 15, 15, 15, 35]
+            for i, h in enumerate(headers): pdf.cell(w[i], 7, h, 1)
+            pdf.ln()
+            
+            pdf.set_font("Arial", size=8)
+            for _, r in stats_table.iterrows():
+                # Kategori ayrımı için koyu font
+                if r['Kategori'] == "ANA TOPLAM": pdf.set_font("Arial", "B", 8)
+                else: pdf.set_font("Arial", "", 8)
+                
+                pdf.cell(w[0], 7, r['Test Adı'].translate(tr), 1)
+                pdf.cell(w[1], 7, str(r['Puan']), 1)
+                pdf.cell(w[2], 7, str(r['Max']), 1)
+                pdf.cell(w[3], 7, f"{r['Grup Ort.']:.2f}", 1)
+                pdf.cell(w[4], 7, f"{r['SS']:.2f}", 1)
+                pdf.cell(w[5], 7, f"{r['Z-Skoru']:.2f}", 1)
+                pdf.cell(w[6], 7, r['Yorum'].translate(tr), 1)
+                pdf.ln()
+                
+            st.download_button("İndir", pdf.output(dest='S').encode('latin-1'), "rapor.pdf")
 
 elif menu == "3. Veri Tabanı":
-    st.header("💾 Araştırma Verisi (Excel)")
+    st.header("💾 Excel Çıktısı")
     df = load_db()
     if not df.empty:
-        st.dataframe(df.head())
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: df.to_excel(writer, index=False)
-        st.download_button("Excel İndir (Full Protokol)", buffer.getvalue(), "tgmd3_research_final.xlsx")
+        st.download_button("Excel İndir", buffer.getvalue(), "tgmd3_data.xlsx")
     else: st.warning("Veri yok.")
