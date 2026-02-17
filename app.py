@@ -11,7 +11,7 @@ from fpdf import FPDF
 # =============================================================================
 # 1. AYARLAR VE PROTOKOL
 # =============================================================================
-st.set_page_config(page_title="TGMD-3 PRO: Akıllı Takip", layout="wide", page_icon="🔍")
+st.set_page_config(page_title="TGMD-3 PRO: Tam Kontrol", layout="wide", page_icon="📋")
 
 FILE_NAME = "tgmd3_longitudinal_db.xlsx"
 
@@ -35,12 +35,8 @@ PROTOCOL = {
     }
 }
 
+# Sütun Tanımları
 MAX_SCORES = {}
-BASE_COLUMNS = [
-    'TestID', 'OgrenciID', 'Ad', 'Soyad', 'Cinsiyet', 'DogumTarihi', 
-    'TestTarihi', 'TestYeri', 'TercihEl', 'TercihAyak', 
-    'YasGrubu', 'YasAy', 'SonIslemTarihi'
-]
 ITEM_COLUMNS = []
 for domain in PROTOCOL:
     for test, items in PROTOCOL[domain].items():
@@ -50,20 +46,27 @@ for domain in PROTOCOL:
             ITEM_COLUMNS.append(f"{prefix}_{test}_{i}")
 
 SCORE_COLUMNS = [f"{test}_Toplam" for domain in PROTOCOL for test in PROTOCOL[domain]]
+BASE_COLUMNS = ['TestID', 'OgrenciID', 'Ad', 'Soyad', 'Cinsiyet', 'DogumTarihi', 'TestTarihi', 'TestYeri', 'TercihEl', 'TercihAyak', 'YasGrubu', 'YasAy', 'SonIslemTarihi']
 FULL_DB_COLUMNS = BASE_COLUMNS + SCORE_COLUMNS + ITEM_COLUMNS
 
 # =============================================================================
-# 2. VERİTABANI MOTORU
+# 2. FONKSİYONLAR
 # =============================================================================
-def generate_student_id(ad, soyad, dogum_tarihi):
-    clean_ad = ad.strip().upper().replace('İ','I').replace('Ğ','G').replace('Ü','U').replace('Ş','S').replace('Ö','O').replace('Ç','C')
-    clean_soyad = soyad.strip().upper().replace('İ','I').replace('Ğ','G').replace('Ü','U').replace('Ş','S').replace('Ö','O').replace('Ç','C')
-    raw_str = f"{clean_ad}{clean_soyad}{str(dogum_tarihi)}"
-    return hashlib.md5(raw_str.encode('utf-8')).hexdigest()[:10]
-
-def generate_test_id(student_id, test_date):
-    raw_str = f"{student_id}{str(test_date)}"
-    return hashlib.md5(raw_str.encode('utf-8')).hexdigest()[:12]
+def generate_ids(ad, soyad, dogum_tarihi, test_tarihi):
+    # Türkçe karakter temizliği
+    tr_map = str.maketrans("ğĞıİşŞüÜöÖçÇ", "gGiIsSuUoOcC")
+    clean_ad = ad.strip().upper().translate(tr_map)
+    clean_soyad = soyad.strip().upper().translate(tr_map)
+    
+    # Öğrenci ID (Sabit)
+    raw_student = f"{clean_ad}{clean_soyad}{str(dogum_tarihi)}"
+    student_id = hashlib.md5(raw_student.encode('utf-8')).hexdigest()[:10]
+    
+    # Test ID (Her test için benzersiz)
+    raw_test = f"{student_id}{str(test_tarihi)}"
+    test_id = hashlib.md5(raw_test.encode('utf-8')).hexdigest()[:12]
+    
+    return student_id, test_id
 
 def load_db():
     if not os.path.exists(FILE_NAME):
@@ -73,20 +76,13 @@ def load_db():
         # Eksik sütunları tamamla
         for col in FULL_DB_COLUMNS:
             if col not in df.columns:
-                if col in BASE_COLUMNS: df[col] = ""
-                else: df[col] = 0
+                df[col] = "" if col in BASE_COLUMNS else 0
         
-        # Tarih formatlarını düzelt (String olarak tutuyoruz ki hata almasın)
-        df['DogumTarihi'] = df['DogumTarihi'].astype(str)
-        df['TestTarihi'] = df['TestTarihi'].astype(str)
-        
-        # Nan temizliği
-        df = df.fillna(0)
-        str_cols = ['TestID', 'OgrenciID', 'Ad', 'Soyad', 'Cinsiyet', 'YasGrubu', 'TestYeri', 'TercihEl', 'TercihAyak']
-        for c in str_cols:
-            if c in df.columns: df[c] = df[c].astype(str).replace("0", "").replace("nan", "")
-
-        return df
+        # Format düzeltmeleri
+        for col in ['DogumTarihi', 'TestTarihi', 'Ad', 'Soyad', 'Cinsiyet', 'TestYeri', 'TercihEl', 'TercihAyak']:
+            if col in df.columns: df[col] = df[col].astype(str).replace('nan', '')
+            
+        return df.fillna(0)
     except:
         return pd.DataFrame(columns=FULL_DB_COLUMNS)
 
@@ -106,165 +102,133 @@ def save_to_db(data_dict):
         new_row = pd.DataFrame([data_dict])
         df = pd.concat([df, new_row], ignore_index=True)
     
-    df = df.fillna(0)
     with pd.ExcelWriter(FILE_NAME, engine='openpyxl') as writer:
         df.to_excel(writer, index=False)
     return True
 
-def calculate_age_group(birth_date, test_date):
+def calculate_age(birth_date, test_date):
     if isinstance(birth_date, str): b_date = pd.to_datetime(birth_date).date()
     else: b_date = birth_date
     if isinstance(test_date, str): t_date = pd.to_datetime(test_date).date()
     else: t_date = test_date
-        
-    diff_days = (t_date - b_date).days
-    age_months = int(diff_days / 30.44)
-    quarter = (age_months // 3) * 3
-    return age_months, f"{quarter}-{quarter+2} Ay"
-
-def get_norm_stats(student_row, full_df):
-    group_df = full_df[
-        (full_df['Cinsiyet'] == student_row['Cinsiyet']) & 
-        (full_df['YasGrubu'] == student_row['YasGrubu'])
-    ]
-    stats = []
-    for test, max_score in MAX_SCORES.items():
-        col = f"{test}_Toplam"
-        puan = float(student_row.get(col, 0))
-        
-        if len(group_df) > 1:
-            ort = group_df[col].mean()
-            ss = group_df[col].std(ddof=1)
-            z = (puan - ort) / ss if ss > 0 else 0
-        else:
-            ort, ss, z = puan, 0, 0
-            
-        if z >= 1: durum = "İleri"
-        elif z <= -1: durum = "Geliştirilmeli"
-        else: durum = "Normal"
-        if len(group_df) < 2: durum = "Veri Yetersiz"
-        
-        stats.append({
-            "Test": test, "Puan": puan, "Max": max_score,
-            "Ort": round(ort,2), "SS": round(ss,2), "Z": round(z,2), "Durum": durum
-        })
-    return pd.DataFrame(stats)
+    
+    diff = (t_date - b_date).days
+    months = int(diff / 30.44)
+    q = (months // 3) * 3
+    return months, f"{q}-{q+2} Ay"
 
 # =============================================================================
-# 3. ARAYÜZ TASARIMI
+# 3. ARAYÜZ
 # =============================================================================
 st.sidebar.title("TGMD-3 PRO")
-menu = st.sidebar.radio("MENÜ", ["1. Test ve Veri Girişi", "2. Gelişim Raporu", "3. Veri Yönetimi (Excel)"])
+menu = st.sidebar.radio("MENÜ", ["1. Test ve Veri Girişi", "2. Gelişim Raporu", "3. Veri Yönetimi"])
 
 if menu == "1. Test ve Veri Girişi":
-    st.header("⏱ Test Oturumu Girişi")
+    st.header("📋 Test Veri Girişi")
     
-    # --- MOD SEÇİMİ: YENİ Mİ ESKİ Mİ? ---
-    mode = st.radio("İşlem Türü Seçiniz:", ["📂 Kayıtlı Öğrenci Seç", "➕ Yeni Öğrenci Kaydı"], horizontal=True)
+    mode = st.radio("Seçim Yapınız:", ["📂 KAYITLI ÖĞRENCİ", "➕ YENİ ÖĞRENCİ KAYDI"], horizontal=True)
     
-    # Değişkenleri başta tanımla
-    ad, soyad, cinsiyet = "", "", "Kız"
-    dt = date(2018, 1, 1)
-    ogrenci_id = None
-    
-    # Veritabanını yükle
     df = load_db()
     
-    if mode == "📂 Kayıtlı Öğrenci Seç":
+    # DEĞİŞKENLERİ BAŞLAT
+    ad, soyad, cinsiyet = "", "", "Kız"
+    dt = date(2018, 1, 1)
+    test_tarihi = date.today()
+    test_yeri = ""
+    el_tercih = "Sağ"
+    ayak_tercih = "Sağ"
+    
+    ogrenci_id = None
+    
+    # --- MOD 1: KAYITLI ÖĞRENCİ ---
+    if mode == "📂 KAYITLI ÖĞRENCİ":
         if df.empty:
-            st.warning("Henüz kayıtlı öğrenci yok. Lütfen 'Yeni Öğrenci Kaydı' seçeneğini kullanın.")
+            st.warning("Sistemde kayıtlı öğrenci yok. Lütfen 'Yeni Öğrenci Kaydı' yapın.")
         else:
-            # BENZERSİZ ÖĞRENCİ LİSTESİ OLUŞTURMA
-            # Ad, Soyad ve Doğum Tarihine göre tekilleştir
-            unique_students = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi', 'Cinsiyet']].drop_duplicates(subset='OgrenciID')
+            # Benzersiz liste
+            uniqs = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi', 'Cinsiyet']].drop_duplicates(subset='OgrenciID')
+            uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad'] + " (" + uniqs['DogumTarihi'] + ")"
             
-            # Seçim Kutusunda Görünecek Etiket (İsim + DT karışıklığı önler)
-            unique_students['Label'] = unique_students['Ad'] + " " + unique_students['Soyad'] + " (" + unique_students['DogumTarihi'] + ")"
+            secim = st.selectbox("Öğrenci Ara / Seç:", uniqs['Etiket'].tolist(), index=None, placeholder="İsim yazın...")
             
-            # Arama Kutusu (Selectbox searchable'dır)
-            selected_label = st.selectbox(
-                "Öğrenciyi Listeden Seçiniz veya İsmini Yazınız:", 
-                unique_students['Label'].tolist(),
-                index=None,
-                placeholder="İsim yazmaya başlayın..."
-            )
-            
-            if selected_label:
-                # Seçilen öğrencinin bilgilerini al
-                student_record = unique_students[unique_students['Label'] == selected_label].iloc[0]
-                ad = student_record['Ad']
-                soyad = student_record['Soyad']
-                dt = pd.to_datetime(student_record['DogumTarihi']).date()
-                cinsiyet = student_record['Cinsiyet']
-                ogrenci_id = student_record['OgrenciID']
+            if secim:
+                rec = uniqs[uniqs['Etiket'] == secim].iloc[0]
+                ad, soyad, cinsiyet = rec['Ad'], rec['Soyad'], rec['Cinsiyet']
+                dt = pd.to_datetime(rec['DogumTarihi']).date()
+                ogrenci_id = rec['OgrenciID']
                 
-                st.success(f"✅ Seçildi: {ad} {soyad} | Doğum Tarihi: {dt}")
+                # Eski tercihlerini bul (Kolaylık olsun diye)
+                last_test = df[df['OgrenciID'] == ogrenci_id].iloc[-1]
+                test_yeri = last_test['TestYeri']
+                el_tercih = last_test['TercihEl'] if last_test['TercihEl'] in ["Sağ", "Sol", "Belirsiz"] else "Sağ"
+                ayak_tercih = last_test['TercihAyak'] if last_test['TercihAyak'] in ["Sağ", "Sol", "Belirsiz"] else "Sağ"
 
-    else: # Yeni Öğrenci Modu
+    # --- MOD 2: YENİ ÖĞRENCİ ---
+    else:
+        st.subheader("1. Kimlik Bilgileri")
         c1, c2, c3, c4 = st.columns(4)
         ad = c1.text_input("Ad").strip().upper()
         soyad = c2.text_input("Soyad").strip().upper()
         dt = c3.date_input("Doğum Tarihi", date(2018, 1, 1))
         cinsiyet = c4.radio("Cinsiyet", ["Kız", "Erkek"], horizontal=True)
-    
-    # --- TEST DETAYLARI (HER İKİ DURUMDA DA GEREKLİ) ---
-    if ad and soyad:
-        st.divider()
-        st.subheader("📝 Test Oturumu Bilgileri")
-        
-        c5, c6, c7, c8 = st.columns(4)
-        test_tarihi = c5.date_input("Test Tarihi", date.today())
-        test_yeri = c6.text_input("Test Yeri (Okul/Salon)").upper()
-        
-        # Daha önce tercihi varsa otomatik getir
-        def_el, def_ayak = "Sağ", "Sağ"
-        if ogrenci_id and not df.empty:
-            prev_data = df[df['OgrenciID'] == ogrenci_id]
-            if not prev_data.empty:
-                last_rec = prev_data.iloc[-1]
-                if str(last_rec['TercihEl']) in ["Sağ", "Sol", "Belirsiz"]: def_el = last_rec['TercihEl']
-                if str(last_rec['TercihAyak']) in ["Sağ", "Sol", "Belirsiz"]: def_ayak = last_rec['TercihAyak']
-        
-        el = c7.selectbox("Tercih Edilen El", ["Sağ", "Sol", "Belirsiz"], index=["Sağ", "Sol", "Belirsiz"].index(def_el))
-        ayak = c8.selectbox("Tercih Edilen Ayak", ["Sağ", "Sol", "Belirsiz"], index=["Sağ", "Sol", "Belirsiz"].index(def_ayak))
 
-        # ID Üretimi
+    # --- ORTAK ALAN: TEST DETAYLARI VE FİZİKSEL ÖZELLİKLER ---
+    # Hem yeni hem eski kayıt için burası zorunlu
+    if ad and soyad:
+        st.markdown("---")
+        st.subheader("2. Test ve Fiziksel Bilgiler")
+        
+        # Test Tarihi ve Fiziksel Özellikler (Yeni öğrenci için de burada görünecek)
+        r1, r2, r3, r4 = st.columns(4)
+        
+        # Test Tarihi (Varsayılan: Bugün)
+        test_tarihi = r1.date_input("Test Tarihi", date.today())
+        
+        # Test Yeri
+        test_yeri = r2.text_input("Test Yeri (Okul/Kulüp)", value=test_yeri).upper()
+        
+        # El / Ayak
+        el_tercih = r3.selectbox("Tercih Edilen El", ["Sağ", "Sol", "Belirsiz"], index=["Sağ", "Sol", "Belirsiz"].index(el_tercih))
+        ayak_tercih = r4.selectbox("Tercih Edilen Ayak", ["Sağ", "Sol", "Belirsiz"], index=["Sağ", "Sol", "Belirsiz"].index(ayak_tercih))
+        
+        # ID ÜRETME
         if not ogrenci_id:
-            ogrenci_id = generate_student_id(ad, soyad, dt)
-        
-        test_id = generate_test_id(ogrenci_id, test_tarihi)
-        
-        # Mevcut Test Kontrolü
+            ogrenci_id, test_id = generate_ids(ad, soyad, dt, test_tarihi)[0], generate_ids(ad, soyad, dt, test_tarihi)[1]
+        else:
+            # Eski öğrenci ama yeni tarih olabilir, o yüzden TestID tekrar hesaplanır
+            test_id = generate_ids(ad, soyad, dt, test_tarihi)[1]
+
+        # ÇAKIŞMA KONTROLÜ
         existing_scores = {}
         is_update = False
         if not df.empty and test_id in df['TestID'].values:
-            st.warning(f"⚠️ {ad} {soyad} için {test_tarihi} tarihinde zaten bir kayıt var. Aşağıdan düzenleyebilirsiniz.")
+            st.warning(f"⚠️ DİKKAT: {ad} {soyad} için {test_tarihi} tarihinde zaten kayıt var. Aşağıdaki işlem GÜNCELLEME olacaktır.")
             existing_scores = df[df['TestID'] == test_id].iloc[0].to_dict()
             is_update = True
         
-        # --- PUANLAMA FORMU ---
+        # --- TEST FORMU ---
         st.markdown("---")
+        st.subheader("3. Performans Puanlama")
+        
         form_data = {}
         toplamlar = {}
         col_l, col_n = st.columns(2)
         
         with col_l:
-            st.subheader("🏃 LOKOMOTOR")
+            st.info("🏃 LOKOMOTOR ALT TESTİ")
             for test_name, items in PROTOCOL["LOKOMOTOR"].items():
                 t_total = 0
                 with st.expander(test_name):
                     for i, item in enumerate(items):
                         key = f"L_{test_name}_{i}"
-                        # Varsa eski puan, yoksa 0
                         val_idx = int(existing_scores.get(key, 0))
                         val = st.radio(item, [0, 1, 2], index=val_idx, key=f"{test_id}_{key}", horizontal=True)
                         form_data[key] = val
                         t_total += val
                     toplamlar[f"{test_name}_Toplam"] = t_total
-                    st.caption(f"Skor: {t_total}")
-
+        
         with col_n:
-            st.subheader("🏀 NESNE KONTROL")
+            st.info("🏀 NESNE KONTROL ALT TESTİ")
             for test_name, items in PROTOCOL["NESNE_KONTROL"].items():
                 t_total = 0
                 with st.expander(test_name):
@@ -275,18 +239,19 @@ if menu == "1. Test ve Veri Girişi":
                         form_data[key] = val
                         t_total += val
                     toplamlar[f"{test_name}_Toplam"] = t_total
-                    st.caption(f"Skor: {t_total}")
         
         # KAYDET BUTONU
-        btn_label = "GÜNCELLE" if is_update else "KAYDET"
-        if st.button(f"💾 {btn_label}", type="primary"):
-            yas_ay, yas_grup = calculate_age_group(dt, test_tarihi)
+        st.markdown("---")
+        btn_text = "VERİLERİ GÜNCELLE" if is_update else "YENİ TESTİ KAYDET"
+        
+        if st.button(f"💾 {btn_text}", type="primary", use_container_width=True):
+            yas_ay, yas_grup = calculate_age(dt, test_tarihi)
             
             record = {
                 "TestID": test_id, "OgrenciID": ogrenci_id,
                 "Ad": ad, "Soyad": soyad, "DogumTarihi": dt, "Cinsiyet": cinsiyet,
                 "TestTarihi": test_tarihi, "TestYeri": test_yeri,
-                "TercihEl": el, "TercihAyak": ayak,
+                "TercihEl": el_tercih, "TercihAyak": ayak_tercih,
                 "YasAy": yas_ay, "YasGrubu": yas_grup,
                 "SonIslemTarihi": str(date.today())
             }
@@ -294,50 +259,43 @@ if menu == "1. Test ve Veri Girişi":
             record.update(toplamlar)
             
             save_to_db(record)
+            st.success(f"✅ İşlem Başarılı! {ad} {soyad} verileri kaydedildi.")
             st.balloons()
-            st.success("Veriler başarıyla işlendi!")
 
 elif menu == "2. Gelişim Raporu":
-    st.header("📈 Gelişim Takip")
+    st.header("📈 Gelişim Raporu")
     df = load_db()
     if not df.empty:
-        # Tekil öğrenci listesi (Görünüm için)
-        unique_students = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi']].drop_duplicates(subset='OgrenciID')
-        unique_students['Label'] = unique_students['Ad'] + " " + unique_students['Soyad'] + " (" + unique_students['DogumTarihi'].astype(str) + ")"
+        # Öğrenci Seç
+        uniqs = df[['OgrenciID', 'Ad', 'Soyad']].drop_duplicates(subset='OgrenciID')
+        uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad']
+        secim = st.selectbox("Öğrenci:", uniqs['Etiket'])
         
-        choice = st.selectbox("Raporlanacak Öğrenciyi Seçin:", unique_students['Label'])
-        
-        if choice:
-            selected_id = unique_students[unique_students['Label'] == choice].iloc[0]['OgrenciID']
-            student_data = df[df['OgrenciID'] == selected_id].sort_values(by='TestTarihi')
-            
-            st.info(f"Bu öğrenciye ait {len(student_data)} farklı ölçüm bulundu.")
+        if secim:
+            oid = uniqs[uniqs['Etiket'] == secim].iloc[0]['OgrenciID']
+            sub_df = df[df['OgrenciID'] == oid].sort_values('TestTarihi')
             
             # Grafik
-            if len(student_data) > 0:
-                dates = student_data['TestTarihi'].tolist()
-                l_scores = [sum([row[f"{t}_Toplam"] for t in PROTOCOL['LOKOMOTOR']]) for _, row in student_data.iterrows()]
-                n_scores = [sum([row[f"{t}_Toplam"] for t in PROTOCOL['NESNE_KONTROL']]) for _, row in student_data.iterrows()]
+            if len(sub_df) > 0:
+                dates = sub_df['TestTarihi'].tolist()
+                l_sc = [sum([row[f"{t}_Toplam"] for t in PROTOCOL['LOKOMOTOR']]) for _, row in sub_df.iterrows()]
+                n_sc = [sum([row[f"{t}_Toplam"] for t in PROTOCOL['NESNE_KONTROL']]) for _, row in sub_df.iterrows()]
                 
                 fig, ax = plt.subplots(figsize=(10, 4))
-                ax.plot(dates, l_scores, 'o-', label='Lokomotor')
-                ax.plot(dates, n_scores, 's-', label='Nesne Kontrol')
-                ax.legend()
+                ax.plot(dates, l_sc, 'o-', label='Lokomotor')
+                ax.plot(dates, n_sc, 's-', label='Nesne Kontrol')
                 ax.set_title("Gelişim Grafiği")
+                ax.legend()
                 st.pyplot(fig)
-            
-            # Detay Tablo
-            st.write("Ölçüm Geçmişi:")
-            st.dataframe(student_data[['TestTarihi', 'YasGrubu', 'TestYeri'] + SCORE_COLUMNS])
+                
+            st.dataframe(sub_df[['TestTarihi', 'YasGrubu', 'TestYeri'] + SCORE_COLUMNS])
 
-elif menu == "3. Veri Yönetimi (Excel)":
+elif menu == "3. Veri Yönetimi":
     st.header("💾 Veri Yönetimi")
     df = load_db()
     if not df.empty:
-        st.dataframe(df.head())
+        st.dataframe(df)
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False)
-        st.download_button("Tüm Veriyi İndir (Long Format)", buffer.getvalue(), "tgmd3_full.xlsx")
-    else:
-        st.warning("Veri yok.")
+        st.download_button("Excel İndir", buffer.getvalue(), "tgmd3_data.xlsx")
