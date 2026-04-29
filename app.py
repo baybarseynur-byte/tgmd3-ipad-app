@@ -276,8 +276,10 @@ elif menu == "2. Bireysel & Gelişim Raporu":
             tr = str.maketrans("ğĞıİşŞüÜöÖçÇ", "gGiIsSuUoOcC")
             
             # Yazı ve Tablo
-            pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, "TGMD-3 PERFORMANS RAPORU", ln=True, align="C")
-            pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, f"Ad Soyad: {curr_rec['Ad']} {curr_rec['Soyad']}\nTarih: {s_date}\n".translate(tr))
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 10, "TGMD-3 PERFORMANS RAPORU", ln=True, align="C")
+            pdf.set_font("Arial", size=10)
+            pdf.multi_cell(0, 5, f"Ad Soyad: {curr_rec['Ad']} {curr_rec['Soyad']}\nTarih: {s_date}\n".translate(tr))
             
             headers = ["Test Adi", "Puan", "Max", "Ort", "Z", "Yorum"]
             w = [45, 15, 15, 20, 20, 40]
@@ -291,26 +293,40 @@ elif menu == "2. Bireysel & Gelişim Raporu":
                 pdf.cell(w[2], 7, str(r['Max']), 1)
                 pdf.cell(w[3], 7, str(r['Grup Ort.']), 1)
                 pdf.cell(w[4], 7, str(r['Z-Skoru']), 1)
-                pdf.cell(w[5], 7, r['Yorum'].translate(tr), 1); pdf.ln()
+                pdf.cell(w[5], 7, r['Yorum'].translate(tr), 1)
+                pdf.ln()
 
             # Grafikleri PDF'e ekle
             pdf.add_page()
-            pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, "Gorsel Analizler", ln=True)
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 10, "Gorsel Analizler", ln=True)
             
-            # Radar Grafiği Kaydet ve Ekle
-            buf1 = io.BytesIO(); fig1.savefig(buf1, format="png", bbox_inches='tight')
-            pdf.image(buf1, x=10, y=30, w=90)
+            # 1. Radar Grafiğini Dosyaya Kaydet ve Ekle
+            fig1.savefig("temp_radar.png", format="png", bbox_inches='tight')
+            pdf.image("temp_radar.png", x=10, y=30, w=90)
             
-            # Norm Eğrisi Kaydet ve Ekle
-            buf2 = io.BytesIO(); fig2.savefig(buf2, format="png", bbox_inches='tight')
-            pdf.image(buf2, x=105, y=30, w=95)
+            # 2. Norm Eğrisini Dosyaya Kaydet ve Ekle
+            fig2.savefig("temp_norm.png", format="png", bbox_inches='tight')
+            pdf.image("temp_norm.png", x=105, y=30, w=95)
             
-            # Gelişim Grafiği (Varsa)
+            # 3. Gelişim Grafiği (Varsa) Dosyaya Kaydet ve Ekle
             if fig3:
-                buf3 = io.BytesIO(); fig3.savefig(buf3, format="png", bbox_inches='tight')
-                pdf.image(buf3, x=10, y=100, w=180)
+                fig3.savefig("temp_gelisim.png", format="png", bbox_inches='tight')
+                pdf.image("temp_gelisim.png", x=10, y=100, w=180)
             
-            st.download_button("İndir", pdf.output(dest='S').encode('latin-1'), f"Rapor_{curr_rec['Ad']}.pdf")
+            # PDF Çıktısını Al
+            pdf_data = pdf.output(dest='S').encode('latin-1')
+            
+            # Çöplük kalmaması için geçici resim dosyalarını temizle
+            try:
+                os.remove("temp_radar.png")
+                os.remove("temp_norm.png")
+                if fig3: os.remove("temp_gelisim.png")
+            except:
+                pass
+            
+            # İndirme Butonu
+            st.download_button("İndir", pdf_data, f"Rapor_{curr_rec['Ad']}.pdf")
 
 elif menu == "3. Veri Tabanı":
     st.header("💾 Veri Yönetimi")
