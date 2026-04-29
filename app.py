@@ -104,8 +104,6 @@ def get_z_comment(z):
 def calculate_full_stats_table(student_row, full_df):
     norm_group = full_df[(full_df['Cinsiyet'] == student_row['Cinsiyet']) & (full_df['YasGrubu'] == student_row['YasGrubu'])]
     rows = []
-    
-    # Alt Testler
     for domain in PROTOCOL:
         for test in PROTOCOL[domain]:
             col = f"{test}_Toplam"
@@ -116,13 +114,10 @@ def calculate_full_stats_table(student_row, full_df):
                 z = (puan - ort) / ss if ss > 0 else 0
             else: ort, ss, z = puan, 0, 0
             rows.append({"Kategori": "Alt Test", "Test Adı": test, "Puan": int(puan), "Max": max_p, "Grup Ort.": round(ort, 2), "SS": round(ss, 2), "Z-Skoru": round(z, 2), "Yorum": get_z_comment(z)})
-            
-    # Ana Toplamlar
     mapping = {"Lokomotor Toplam": "Lokomotor_Genel_Toplam", "Nesne Kontrol Toplam": "Nesne_Genel_Toplam", "KABA MOTOR TOPLAM": "Kaba_Motor_Toplam"}
     max_loko = sum([MAX_SCORES_SUBTEST[t] for t in PROTOCOL["LOKOMOTOR"]])
     max_nesne = sum([MAX_SCORES_SUBTEST[t] for t in PROTOCOL["NESNE_KONTROL"]])
     max_map = {"Lokomotor Toplam": max_loko, "Nesne Kontrol Toplam": max_nesne, "KABA MOTOR TOPLAM": max_loko + max_nesne}
-
     for label, col in mapping.items():
         puan = float(student_row.get(col, 0))
         if len(norm_group) > 1:
@@ -145,7 +140,6 @@ if menu == "1. Test Girişi":
     ad, soyad, cinsiyet = "", "", "Kız"
     dt = date(2018, 1, 1)
     ogrenci_id = None
-    
     if mode == "📂 Kayıtlı Öğrenci":
         if df.empty: st.warning("Kayıt yok."); st.stop()
         uniqs = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi']].drop_duplicates(subset='OgrenciID')
@@ -167,14 +161,11 @@ if menu == "1. Test Girişi":
         el = r3.selectbox("El", ["Sağ","Sol"]); ayak = r4.selectbox("Ayak", ["Sağ","Sol"])
         if not ogrenci_id: ogrenci_id, test_id = generate_ids(ad, soyad, dt, test_tarihi)
         else: test_id = generate_ids(ad, soyad, dt, test_tarihi)[1]
-        
         exist = {}
         if not df.empty and test_id in df['TestID'].values:
             st.warning("⚠️ Güncelleme Modu"); exist = df[df['TestID'] == test_id].iloc[0].to_dict()
-
         col_l, col_n = st.columns(2); form_data = {}; sub_totals = {}
-        l_total = 0; n_total = 0
-        
+        l_total, n_total = 0, 0
         with col_l:
             st.info("🏃 LOKOMOTOR")
             for t_name, items in PROTOCOL["LOKOMOTOR"].items():
@@ -188,7 +179,6 @@ if menu == "1. Test Girişi":
                         v2 = c2.checkbox("D2", bool(exist.get(k2,0)), key=f"{test_id}_{k2}")
                         form_data[k1], form_data[k2] = int(v1), int(v2); s_tot += int(v1)+int(v2)
                 sub_totals[f"{t_name}_Toplam"] = s_tot; l_total += s_tot
-        
         with col_n:
             st.info("🏀 NESNE KONTROL")
             for t_name, items in PROTOCOL["NESNE_KONTROL"].items():
@@ -202,7 +192,6 @@ if menu == "1. Test Girişi":
                         v2 = c2.checkbox("D2", bool(exist.get(k2,0)), key=f"{test_id}_{k2}")
                         form_data[k1], form_data[k2] = int(v1), int(v2); s_tot += int(v1)+int(v2)
                 sub_totals[f"{t_name}_Toplam"] = s_tot; n_total += s_tot
-
         if st.button("💾 KAYDET", type="primary", use_container_width=True):
             ay, grup = calculate_age(dt, test_tarihi)
             rec = {"TestID": test_id, "OgrenciID": ogrenci_id, "Ad": ad, "Soyad": soyad, "DogumTarihi": str(dt), "Cinsiyet": cinsiyet, "TestTarihi": str(test_tarihi), "TestYeri": test_yeri, "TercihEl": el, "TercihAyak": ayak, "YasAy": ay, "YasGrubu": grup, "SonIslemTarihi": str(date.today()), "Lokomotor_Genel_Toplam": l_total, "Nesne_Genel_Toplam": n_total, "Kaba_Motor_Toplam": l_total + n_total}
@@ -216,7 +205,6 @@ elif menu == "2. Bireysel & Gelişim Raporu":
     uniqs = df[['OgrenciID', 'Ad', 'Soyad']].drop_duplicates(subset='OgrenciID')
     uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad']
     secim = st.selectbox("Öğrenci:", uniqs['Etiket'])
-    
     if secim:
         oid = uniqs[uniqs['Etiket'] == secim].iloc[0]['OgrenciID']
         history = df[df['OgrenciID'] == oid].sort_values('TestTarihi')
@@ -231,16 +219,12 @@ elif menu == "2. Bireysel & Gelişim Raporu":
         
         st.markdown("### 2. Görsel Analiz (Radar ve Norm Eğrisi)")
         col_g1, col_g2 = st.columns(2)
-        
-        # --- RADAR GRAFİĞİ ---
         sub_data = stats_table[stats_table['Kategori'] == "Alt Test"]
         categories = sub_data['Test Adı'].tolist()
         student_pct = [(s / m) * 100 for s, m in zip(sub_data['Puan'], sub_data['Max'])]
         group_pct = [(g / m) * 100 for g, m in zip(sub_data['Grup Ort.'], sub_data['Max'])]
-        
         angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
         student_pct += student_pct[:1]; group_pct += group_pct[:1]; angles += angles[:1]
-        
         fig1, ax1 = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
         ax1.plot(angles, student_pct, color='#3498db', linewidth=2, label='Öğrenci (%)')
         ax1.fill(angles, student_pct, color='#3498db', alpha=0.25)
@@ -248,8 +232,6 @@ elif menu == "2. Bireysel & Gelişim Raporu":
         ax1.set_xticks(angles[:-1]); ax1.set_xticklabels(categories, fontsize=8)
         ax1.set_ylim(0, 100); ax1.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
         with col_g1: st.pyplot(fig1)
-            
-        # --- NORM EĞRİSİ ---
         km_z = float(stats_table[stats_table['Test Adı'] == "KABA MOTOR TOPLAM"]['Z-Skoru'].values[0])
         fig2, ax2 = plt.subplots(figsize=(8, 6))
         x_norm = np.linspace(-4, 4, 100); y_norm = stats.norm.pdf(x_norm, 0, 1)
@@ -258,8 +240,6 @@ elif menu == "2. Bireysel & Gelişim Raporu":
         ax2.axvline(km_z, color='red', linestyle='--', label=f'Öğrenci (Z={km_z})')
         ax2.legend(); ax2.set_title("Genel Gelişim (Norm Eğrisi)")
         with col_g2: st.pyplot(fig2)
-
-        # --- GELİŞİM GRAFİĞİ ---
         fig3 = None
         if len(history) > 1:
             st.markdown("### 3. Zaman İçindeki Gelişim")
@@ -269,63 +249,60 @@ elif menu == "2. Bireysel & Gelişim Raporu":
             ax3.legend(); ax3.grid(True)
             st.pyplot(fig3)
 
-        # --- PDF OLUŞTURMA (GRAFİKLER DAHİL) ---
+        # --- PDF OLUŞTURMA (YENİ DÜZEN) ---
         if st.button("📄 PDF RAPORU İNDİR"):
             pdf = FPDF()
             pdf.add_page()
             tr = str.maketrans("ğĞıİşŞüÜöÖçÇ", "gGiIsSuUoOcC")
             
-            # Yazı ve Tablo
-            pdf.set_font("Arial", "B", 14)
-            pdf.cell(0, 10, "TGMD-3 PERFORMANS RAPORU", ln=True, align="C")
+            # 1. ÜST: ÖĞRENCİ BİLGİLERİ (ORTALANMIŞ)
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, "TGMD-3 PERFORMANS KARNESI", ln=True, align="C")
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 10, f"Ogrenci: {curr_rec['Ad']} {curr_rec['Soyad']}".translate(tr), ln=True, align="C")
             pdf.set_font("Arial", size=10)
-            pdf.multi_cell(0, 5, f"Ad Soyad: {curr_rec['Ad']} {curr_rec['Soyad']}\nTarih: {s_date}\n".translate(tr))
-            
+            pdf.cell(0, 7, f"Test Tarihi: {s_date} | Yas Grubu: {curr_rec['YasGrubu']} | Cinsiyet: {curr_rec['Cinsiyet']}".translate(tr), ln=True, align="C")
+            pdf.ln(5)
+
+            # 2. ORTA: GRAFİKLER (YAN YANA)
+            fig1.savefig("temp_radar.png", format="png", bbox_inches='tight')
+            fig2.savefig("temp_norm.png", format="png", bbox_inches='tight')
+            pdf.image("temp_radar.png", x=10, y=45, w=90)
+            pdf.image("temp_norm.png", x=105, y=45, w=95)
+            pdf.ln(85) # Grafiklerden sonra boşluk bırak
+
+            # 3. ALT: TEST PUANLARI TABLOSU
+            pdf.set_font("Arial", "B", 11)
+            pdf.cell(0, 10, "Detayli Test Puanlari ve Analiz", ln=True, align="L")
             headers = ["Test Adi", "Puan", "Max", "Ort", "Z", "Yorum"]
             w = [45, 15, 15, 20, 20, 40]
             pdf.set_font("Arial", "B", 8)
-            for i, h in enumerate(headers): pdf.cell(w[i], 7, h, 1)
+            for i, h in enumerate(headers): pdf.cell(w[i], 7, h, 1, 0, 'C')
             pdf.ln()
             pdf.set_font("Arial", size=8)
             for _, r in stats_table.iterrows():
+                # Ana toplamları kalın yap
+                if r['Kategori'] == "ANA TOPLAM": pdf.set_font("Arial", "B", 8)
+                else: pdf.set_font("Arial", "", 8)
                 pdf.cell(w[0], 7, r['Test Adı'].translate(tr), 1)
-                pdf.cell(w[1], 7, str(r['Puan']), 1)
-                pdf.cell(w[2], 7, str(r['Max']), 1)
-                pdf.cell(w[3], 7, str(r['Grup Ort.']), 1)
-                pdf.cell(w[4], 7, str(r['Z-Skoru']), 1)
-                pdf.cell(w[5], 7, r['Yorum'].translate(tr), 1)
-                pdf.ln()
+                pdf.cell(w[1], 7, str(r['Puan']), 1, 0, 'C')
+                pdf.cell(w[2], 7, str(r['Max']), 1, 0, 'C')
+                pdf.cell(w[3], 7, str(r['Grup Ort.']), 1, 0, 'C')
+                pdf.cell(w[4], 7, str(r['Z-Skoru']), 1, 0, 'C')
+                pdf.cell(w[5], 7, r['Yorum'].translate(tr), 1); pdf.ln()
 
-            # Grafikleri PDF'e ekle
-            pdf.add_page()
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 10, "Gorsel Analizler", ln=True)
-            
-            # 1. Radar Grafiğini Dosyaya Kaydet ve Ekle
-            fig1.savefig("temp_radar.png", format="png", bbox_inches='tight')
-            pdf.image("temp_radar.png", x=10, y=30, w=90)
-            
-            # 2. Norm Eğrisini Dosyaya Kaydet ve Ekle
-            fig2.savefig("temp_norm.png", format="png", bbox_inches='tight')
-            pdf.image("temp_norm.png", x=105, y=30, w=95)
-            
-            # 3. Gelişim Grafiği (Varsa) Dosyaya Kaydet ve Ekle
+            # 4. (OPSİYONEL) SAYFA 2: GELİŞİM GRAFİĞİ
             if fig3:
+                pdf.add_page()
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 10, "Zaman Icindeki Gelisim Grafigi", ln=True)
                 fig3.savefig("temp_gelisim.png", format="png", bbox_inches='tight')
-                pdf.image("temp_gelisim.png", x=10, y=100, w=180)
-            
-            # PDF Çıktısını Al
+                pdf.image("temp_gelisim.png", x=10, y=30, w=180)
+
+            # Temizlik ve Çıktı
             pdf_data = pdf.output(dest='S').encode('latin-1')
-            
-            # Çöplük kalmaması için geçici resim dosyalarını temizle
-            try:
-                os.remove("temp_radar.png")
-                os.remove("temp_norm.png")
-                if fig3: os.remove("temp_gelisim.png")
-            except:
-                pass
-            
-            # İndirme Butonu
+            for f in ["temp_radar.png", "temp_norm.png", "temp_gelisim.png"]:
+                if os.path.exists(f): os.remove(f)
             st.download_button("İndir", pdf_data, f"Rapor_{curr_rec['Ad']}.pdf")
 
 elif menu == "3. Veri Tabanı":
