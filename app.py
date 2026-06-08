@@ -69,18 +69,29 @@ def load_db():
     try:
         df = pd.read_excel(FILE_NAME)
         for col in FULL_DB_COLUMNS:
-            if col not in df.columns: df[col] = "" if col in BASE_COLUMNS else 0
-        return df.fillna(0)
-    except: return pd.DataFrame(columns=FULL_DB_COLUMNS)
+            if col not in df.columns: 
+                df[col] = "" if col in BASE_COLUMNS else 0
+        
+        # Tip güvenliği için sütun bazlı temizleme
+        for col in df.columns:
+            if col in BASE_COLUMNS:
+                df[col] = df[col].fillna("").astype(str)
+            else:
+                df[col] = pd.to_numeric(df[col].fillna(0), errors='coerce').fillna(0)
+        return df
+    except: 
+        return pd.DataFrame(columns=FULL_DB_COLUMNS)
 
 def save_to_db(data_dict):
     df = load_db()
     test_id = data_dict["TestID"]
+    
+    # Güncelleme modunda çakışmaları önlemek için eski kaydı temizleme
     if not df.empty and test_id in df["TestID"].values:
-        idx = df[df["TestID"] == test_id].index[0]
-        for key, val in data_dict.items(): df.at[idx, key] = val
-    else:
-        df = pd.concat([df, pd.DataFrame([data_dict])], ignore_index=True)
+        df = df[df["TestID"] != test_id]
+        
+    new_row = pd.DataFrame([data_dict])
+    df = pd.concat([df, new_row], ignore_index=True)
     df.to_excel(FILE_NAME, index=False)
     return True
 
@@ -142,8 +153,8 @@ if menu == "1. Test Girişi":
     ogrenci_id = None
     if mode == "📂 Kayıtlı Öğrenci":
         if df.empty: st.warning("Kayıt yok."); st.stop()
-        uniqs = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi']].drop_duplicates(subset='OgrenciID')
-        uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad'] + " (" + str(uniqs['DogumTarihi']) + ")"
+        uniqs = df[['OgrenciID', 'Ad', 'Soyad', 'DogumTarihi']].drop_duplicates(subset='OgrenciID').copy()
+        uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad'] + " (" + uniqs['DogumTarihi'].astype(str) + ")"
         secim = st.selectbox("Öğrenci Seç:", uniqs['Etiket'], index=None)
         if secim:
             rec = uniqs[uniqs['Etiket'] == secim].iloc[0]
@@ -202,7 +213,7 @@ elif menu == "2. Bireysel & Gelişim Raporu":
     st.header("📊 Detaylı Performans Karnesi")
     df = load_db()
     if df.empty: st.warning("Veri yok."); st.stop()
-    uniqs = df[['OgrenciID', 'Ad', 'Soyad']].drop_duplicates(subset='OgrenciID')
+    uniqs = df[['OgrenciID', 'Ad', 'Soyad']].drop_duplicates(subset='OgrenciID').copy()
     uniqs['Etiket'] = uniqs['Ad'] + " " + uniqs['Soyad']
     secim = st.selectbox("Öğrenci:", uniqs['Etiket'])
     if secim:
@@ -225,6 +236,7 @@ elif menu == "2. Bireysel & Gelişim Raporu":
         group_pct = [(g / m) * 100 for g, m in zip(sub_data['Grup Ort.'], sub_data['Max'])]
         angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
         student_pct += student_pct[:1]; group_pct += group_pct[:1]; angles += angles[:1]
+        
         fig1, ax1 = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
         ax1.plot(angles, student_pct, color='#3498db', linewidth=2, label='Öğrenci (%)')
         ax1.fill(angles, student_pct, color='#3498db', alpha=0.25)
@@ -232,6 +244,7 @@ elif menu == "2. Bireysel & Gelişim Raporu":
         ax1.set_xticks(angles[:-1]); ax1.set_xticklabels(categories, fontsize=8)
         ax1.set_ylim(0, 100); ax1.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
         with col_g1: st.pyplot(fig1)
+        
         km_z = float(stats_table[stats_table['Test Adı'] == "KABA MOTOR TOPLAM"]['Z-Skoru'].values[0])
         fig2, ax2 = plt.subplots(figsize=(8, 6))
         x_norm = np.linspace(-4, 4, 100); y_norm = stats.norm.pdf(x_norm, 0, 1)
@@ -240,6 +253,7 @@ elif menu == "2. Bireysel & Gelişim Raporu":
         ax2.axvline(km_z, color='red', linestyle='--', label=f'Öğrenci (Z={km_z})')
         ax2.legend(); ax2.set_title("Genel Gelişim (Norm Eğrisi)")
         with col_g2: st.pyplot(fig2)
+        
         fig3 = None
         if len(history) > 1:
             st.markdown("### 3. Zaman İçindeki Gelişim")
@@ -249,13 +263,22 @@ elif menu == "2. Bireysel & Gelişim Raporu":
             ax3.legend(); ax3.grid(True)
             st.pyplot(fig3)
 
-        # --- PDF OLUŞTURMA (YENİ DÜZEN) ---
-        if st.button("📄 PDF RAPORU İNDİR"):
+        # --- KARARLI PDF ÜRETİM VE İNDİRME MİMARİSİ ---
+        st.markdown("### 4. Rapor Çıktısı")
+        
+        # Grafikleri geçici olarak diske kaydet
+        fig1.savefig("temp_radar.png", format="png", bbox_inches='tight')
+        fig2.savefig("temp_norm.png", format="png", bbox_inches='tight')
+        if fig3:
+            fig3.savefig("temp_gelisim.png", format="png", bbox_inches='tight')
+
+        # İzole PDF Byte Oluşturucu Fonksiyonu
+        def generate_pdf_bytes():
             pdf = FPDF()
             pdf.add_page()
             tr = str.maketrans("ğĞıİşŞüÜöÖçÇ", "gGiIsSuUoOcC")
             
-            # 1. ÜST: ÖĞRENCİ BİLGİLERİ (ORTALANMIŞ)
+            # Üst Kimlik Alanı
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "TGMD-3 PERFORMANS KARNESI", ln=True, align="C")
             pdf.set_font("Arial", "B", 12)
@@ -264,14 +287,12 @@ elif menu == "2. Bireysel & Gelişim Raporu":
             pdf.cell(0, 7, f"Test Tarihi: {s_date} | Yas Grubu: {curr_rec['YasGrubu']} | Cinsiyet: {curr_rec['Cinsiyet']}".translate(tr), ln=True, align="C")
             pdf.ln(5)
 
-            # 2. ORTA: GRAFİKLER (YAN YANA)
-            fig1.savefig("temp_radar.png", format="png", bbox_inches='tight')
-            fig2.savefig("temp_norm.png", format="png", bbox_inches='tight')
+            # Görsellerin Yerleşimi
             pdf.image("temp_radar.png", x=10, y=45, w=90)
             pdf.image("temp_norm.png", x=105, y=45, w=95)
-            pdf.ln(85) # Grafiklerden sonra boşluk bırak
+            pdf.ln(85)
 
-            # 3. ALT: TEST PUANLARI TABLOSU
+            # Veri Analiz Tablosu
             pdf.set_font("Arial", "B", 11)
             pdf.cell(0, 10, "Detayli Test Puanlari ve Analiz", ln=True, align="L")
             headers = ["Test Adi", "Puan", "Max", "Ort", "Z", "Yorum"]
@@ -279,31 +300,48 @@ elif menu == "2. Bireysel & Gelişim Raporu":
             pdf.set_font("Arial", "B", 8)
             for i, h in enumerate(headers): pdf.cell(w[i], 7, h, 1, 0, 'C')
             pdf.ln()
+            
             pdf.set_font("Arial", size=8)
             for _, r in stats_table.iterrows():
-                # Ana toplamları kalın yap
-                if r['Kategori'] == "ANA TOPLAM": pdf.set_font("Arial", "B", 8)
-                else: pdf.set_font("Arial", "", 8)
+                if r['Kategori'] == "ANA TOPLAM": 
+                    pdf.set_font("Arial", "B", 8)
+                else: 
+                    pdf.set_font("Arial", "", 8)
                 pdf.cell(w[0], 7, r['Test Adı'].translate(tr), 1)
                 pdf.cell(w[1], 7, str(r['Puan']), 1, 0, 'C')
                 pdf.cell(w[2], 7, str(r['Max']), 1, 0, 'C')
                 pdf.cell(w[3], 7, str(r['Grup Ort.']), 1, 0, 'C')
                 pdf.cell(w[4], 7, str(r['Z-Skoru']), 1, 0, 'C')
-                pdf.cell(w[5], 7, r['Yorum'].translate(tr), 1); pdf.ln()
+                pdf.cell(w[5], 7, r['Yorum'].translate(tr), 1)
+                pdf.ln()
 
-            # 4. (OPSİYONEL) SAYFA 2: GELİŞİM GRAFİĞİ
-            if fig3:
+            # Sayfa 2 Gelişim Grafiği Eklentisi
+            if fig3 and os.path.exists("temp_gelisim.png"):
                 pdf.add_page()
                 pdf.set_font("Arial", "B", 12)
                 pdf.cell(0, 10, "Zaman Icindeki Gelisim Grafigi", ln=True)
-                fig3.savefig("temp_gelisim.png", format="png", bbox_inches='tight')
                 pdf.image("temp_gelisim.png", x=10, y=30, w=180)
 
-            # Temizlik ve Çıktı
-            pdf_data = pdf.output(dest='S').encode('latin-1')
+            return pdf.output(dest='S').encode('latin-1')
+
+        try:
+            pdf_data = generate_pdf_bytes()
+            st.download_button(
+                label="📄 PDF RAPORU İNDİR",
+                data=pdf_data,
+                file_name=f"Rapor_{curr_rec['Ad']}_{s_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"PDF derleme motorunda hata oluştu: {e}")
+        finally:
+            # Bellek ve Disk Temizliği
+            plt.close(fig1)
+            plt.close(fig2)
+            if fig3: plt.close(fig3)
             for f in ["temp_radar.png", "temp_norm.png", "temp_gelisim.png"]:
                 if os.path.exists(f): os.remove(f)
-            st.download_button("İndir", pdf_data, f"Rapor_{curr_rec['Ad']}.pdf")
 
 elif menu == "3. Veri Tabanı":
     st.header("💾 Veri Yönetimi")
@@ -311,5 +349,6 @@ elif menu == "3. Veri Tabanı":
     if not df.empty:
         st.dataframe(df)
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: df.to_excel(writer, index=False)
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: 
+            df.to_excel(writer, index=False)
         st.download_button("Excel Olarak İndir", buffer.getvalue(), "tgmd3_data.xlsx")
